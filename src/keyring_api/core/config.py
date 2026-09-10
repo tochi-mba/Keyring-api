@@ -166,6 +166,15 @@ class Settings(BaseSettings):
     secret_dir: Path = Path("var/secrets")
     """Encrypted credential files. Never inside a directory any endpoint serves from."""
 
+    admin_token: SecretStr | None = None
+    """Authorises the administrative endpoints -- issuing invites, disabling accounts.
+
+    Administration is the operator, not an account. There is no ``is_admin`` flag that
+    could be granted by mistake and no path by which a compromised account becomes one;
+    the token comes from the environment, the same place the master key does. Unset
+    means the administrative endpoints are unavailable rather than open.
+    """
+
     master_key: SecretStr | None = None
     """Base64 of 32 random bytes, from the environment. See docs/operations.md.
 

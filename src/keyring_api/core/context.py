@@ -46,6 +46,19 @@ def bind_request_id(request_id: str) -> Iterator[str]:
         _request_id.reset(token)
 
 
+def set_account_id(account_id: str) -> None:
+    """Bind ``account_id`` for the remainder of the current task.
+
+    Unlike :func:`bind_account_id` there is no matching unbind, because the caller is a
+    FastAPI dependency: the binding has to outlive the dependency and cover the handler,
+    and a context manager cannot span the two. Context variables are task-local, so the
+    binding disappears when the request's task ends rather than leaking into the next
+    request served by the same worker -- which is the property that makes this safe, and
+    the reason there is a concurrency test for it.
+    """
+    _account_id.set(account_id)
+
+
 @contextmanager
 def bind_account_id(account_id: str) -> Iterator[str]:
     """Bind ``account_id`` for the duration of the block, restoring the previous value after."""

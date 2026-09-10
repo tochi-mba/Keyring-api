@@ -28,6 +28,7 @@ contract rather than decoration — see [Invariants](#invariants).
 | `make fmt` | Format and auto-fix. |
 | `make run` | Serve on :8001 with reload. Docs at `/docs`. |
 | `make cov` | HTML coverage report in `htmlcov/`. |
+| `make smoke` | End-to-end check against a keyring already running on :8099. See `scripts/smoke.py`. |
 
 Always run `make check` rather than a bare `pytest` — piping any of these to `head`/`tail`
 in a shell chain masks the exit code, which is how a broken commit slips through.

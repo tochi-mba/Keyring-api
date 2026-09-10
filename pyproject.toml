@@ -110,6 +110,9 @@ ignore = [
 # A fake exists to be substitutable for the real thing, so it mirrors the real
 # signatures exactly -- unused parameters, timeout arguments and all.
 "tests/fakes/*" = ["ARG002", "ASYNC109"]
+# An operational script, not library code: it prints (that is its output), it exits
+# non-zero (that is its contract), and it talks to a real server over real HTTP.
+"scripts/*" = ["T20", "S310", "PLR0915"]
 "tests/**" = [
     "S101",    # asserts are the point
     "S105",    # test fixtures contain literal token-shaped strings on purpose

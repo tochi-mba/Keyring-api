@@ -32,6 +32,9 @@ cov: ## Write an HTML coverage report to htmlcov/
 
 check: lint type imports test ## Everything CI runs
 
+smoke: ## End-to-end check against a keyring already running on :8099
+	$(UV) run python scripts/smoke.py
+
 run: ## Serve the API on :8001 with reload
 	$(UV) run uvicorn keyring_api.api.app:create_app --factory --reload --port 8001
 

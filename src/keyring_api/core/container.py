@@ -24,7 +24,7 @@ from keyring_api.accounts.sql_store import (
     SqlSessionStore,
 )
 from keyring_api.admin.service import Actor, AdminService
-from keyring_api.audit.log import InMemoryAuditLog
+from keyring_api.audit.sql_log import SqlAuditLog
 from keyring_api.core.clock import SystemClock
 from keyring_api.core.logging import get_logger
 from keyring_api.credentials.oauth_client import HttpTokenEndpoint
@@ -63,7 +63,7 @@ class Container:
     secrets: SqlSecretStore
     outbox: Outbox
     roles: SqlRoleStore
-    audit: InMemoryAuditLog
+    audit: SqlAuditLog
     account_service: AccountService
     credential_service: CredentialService
     admin_service: AdminService
@@ -92,7 +92,7 @@ class Container:
         tokens = HttpTokenEndpoint(timeout_seconds=settings.oauth_http_timeout_seconds)
         outbox = Outbox(build_sender(settings.email))
         roles = SqlRoleStore(database=database)
-        audit = InMemoryAuditLog(clock=clock)
+        audit = SqlAuditLog(database=database, clock=clock)
 
         account_service = AccountService(
             accounts=accounts,

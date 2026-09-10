@@ -17,24 +17,19 @@ account.
 **Details are for humans, not for reconstruction.** A short string saying what changed.
 If an entry would need a secret to be useful, it is the wrong entry.
 
-The log is capped. It is in memory like everything else in v1 (ADR-0004), and an
-uncapped list of entries driven by request volume is a memory leak with an audit-shaped
-excuse.
+The log is capped. An uncapped table driven by request volume grows without anybody
+deciding it should, which is a leak with an audit-shaped excuse. The adapter is
+:mod:`keyring_api.audit.sql_log`.
 """
 
 from __future__ import annotations
 
-import asyncio
-import uuid
-from collections import deque
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from datetime import datetime
-
-    from keyring_api.core.clock import Clock
 
 MAX_ENTRIES = 10_000
 """Oldest entries are dropped past this. See the module docstring."""
@@ -103,46 +98,3 @@ class AuditLog(Protocol):
     async def count(self) -> int:
         """How many entries are held."""
         ...
-
-
-class InMemoryAuditLog:
-    """A bounded deque of entries."""
-
-    def __init__(self, *, clock: Clock, max_entries: int = MAX_ENTRIES) -> None:
-        self._clock = clock
-        self._entries: deque[AuditEntry] = deque(maxlen=max_entries)
-        self._lock = asyncio.Lock()
-
-    async def record(
-        self,
-        action: AuditAction,
-        *,
-        actor_id: str,
-        target_id: str | None = None,
-        detail: str = "",
-    ) -> AuditEntry:
-        entry = AuditEntry(
-            entry_id=uuid.uuid4().hex,
-            at=self._clock.now(),
-            action=action,
-            actor_id=actor_id,
-            target_id=target_id,
-            detail=detail,
-        )
-        async with self._lock:
-            self._entries.append(entry)
-        return entry
-
-    async def recent(self, *, limit: int = 100, actor_id: str | None = None) -> list[AuditEntry]:
-        async with self._lock:
-            entries = list(self._entries)
-
-        if actor_id is not None:
-            entries = [entry for entry in entries if entry.actor_id == actor_id]
-
-        # Newest first: the question being asked is almost always "what just happened".
-        return entries[::-1][:limit]
-
-    async def count(self) -> int:
-        async with self._lock:
-            return len(self._entries)

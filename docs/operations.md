@@ -30,20 +30,11 @@ internet. That combination is why this page is a checklist rather than a descrip
 - [ ] **Backups of `KEYRING_DATABASE_PATH` and the signing key, and separately of the
       master key.** Losing the database loses your family's stored logins. Losing the
       master key makes the backup unreadable. Storing them together makes the backup as
-      sensitive as the vault.
-
-      Back the database up with `VACUUM INTO`, never `cp`. The database runs in WAL
-      mode, so a plain copy of the main file can miss committed transactions that are
-      still in the write-ahead log:
-
-      ```
-      sqlite3 /var/lib/keyring/keyring.db "VACUUM INTO '/backup/keyring-$(date +%F).db'"
-      ```
-
-- [ ] **A durable store.** Credential material is durable. Accounts, sessions and
-      profiles are still in memory ([ADR-0004](adr/0004-in-memory-stores.md)): a restart
-      loses every account, and the encrypted credential rows become unreachable. **Do
-      this before anyone else has an account.**
+      sensitive as the vault. Take them with `VACUUM INTO`, never `cp` — see
+      [The database](#the-database).
+- [ ] **A restore you have actually tried.** A backup you have never restored is a belief,
+      not a backup. Copy one to a scratch directory, point a keyring at it on a throwaway
+      port, and log in.
 
 ## Generating the keys
 
@@ -159,6 +150,64 @@ Have this conversation during onboarding rather than after an incident:
   opt-in and flagged on the connection. Offer the choice; do not default it on.
 - **If keyring is breached, their third-party accounts are exposed, not just yours.**
 
+## The database
+
+One SQLite file, at `KEYRING_DATABASE_PATH`, holding everything: accounts, sessions,
+invites, profiles, connections, roles, the audit log, and the encrypted credential
+material ([ADR-0012](adr/0012-sqlite.md)). It is created mode 0600, and so are its `-wal`
+and `-shm` sidecars -- the credential material in them is encrypted, but the password
+hashes and session token hashes are not.
+
+The schema is applied at startup from numbered files in `src/keyring_api/storage/migrations/`
+and recorded in a `schema_version` table. Starting an up-to-date database applies nothing,
+so it is safe on every start.
+
+### Backing it up
+
+**`VACUUM INTO`, never `cp`.** The database runs in WAL mode, so a plain copy of the main
+file can miss transactions that are committed but still in the write-ahead log. `VACUUM
+INTO` takes a consistent snapshot of a live database without stopping the service:
+
+```bash
+sqlite3 /var/lib/keyring/keyring.db "VACUUM INTO '/backup/keyring-$(date +%F).db'"
+```
+
+The `sqlite3` CLI is a separate package and is not always installed. The same command
+through the Python that is already there:
+
+```bash
+python -c "import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); \
+           c.execute(f\"VACUUM INTO '{sys.argv[2]}'\"); c.close()" \
+  /var/lib/keyring/keyring.db /backup/keyring-$(date +%F).db
+```
+
+Either way the snapshot arrives mode 0644, because it is a new file this service did not
+create. `chmod 600` it. The snapshot is as sensitive as the original.
+
+Keep the master key somewhere else: together they are the vault, apart the backup is
+unreadable.
+
+### Restoring it
+
+Stop the service, put the file at `KEYRING_DATABASE_PATH`, make sure the master key and the
+signing key are the ones that go with it, and start. Delete any stale `-wal` and `-shm`
+beside the old file first; they belong to the database they were written for.
+
+A backup you have never restored is a belief. Copy one to a scratch directory, point a
+keyring at it on a throwaway port, and log in.
+
+### Looking inside it
+
+```bash
+sqlite3 /var/lib/keyring/keyring.db "SELECT account_id, email, status FROM accounts"
+sqlite3 /var/lib/keyring/keyring.db "SELECT at, action, actor_id, detail FROM audit
+                                     ORDER BY sequence DESC LIMIT 20"
+```
+
+The `secrets` table is four columns of opaque bytes and will tell you nothing without the
+master key -- which is the intent. There is no supported way to decrypt a credential
+outside the service, and adding one would be adding a way.
+
 ## Watching it
 
 `GET /healthy` needs no authentication and reports counts only — never an address, a
@@ -179,11 +228,12 @@ name there rather than remembering not to log it.
 
 - **No email.** Reset and invite delivery is manual ([ADR-0009](adr/0009-invite-only.md)).
 - **No WAF, no DDoS protection.** Out of proportion for a dozen known users.
-- **No cryptographic shredding on delete.** Deleting an account deletes its files
+- **No cryptographic shredding on delete.** Deleting an account deletes its rows
   ([ADR-0005](adr/0005-envelope-encryption.md)); an old backup remains readable.
 - **No revocation of a signed service token before it expires**
   ([ADR-0008](adr/0008-opaque-sessions-signed-service-tokens.md)).
-- **No multi-replica anything.** One process ([ADR-0004](adr/0004-in-memory-stores.md)).
+- **No multi-replica anything.** One process, deliberately, and three separate
+  things enforce it ([ADR-0013](adr/0013-single-process.md)).
 
 ## Legal and terms
 

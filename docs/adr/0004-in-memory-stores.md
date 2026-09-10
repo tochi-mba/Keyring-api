@@ -1,6 +1,10 @@
 # ADR-0004: in-memory stores for v1, behind ports
 
-**Status:** accepted
+**Status:** superseded by [ADR-0012](0012-sqlite.md).
+
+The scheduled change below happened. It went to SQLite rather than Postgres, for the
+reasons in 0012; everything this ADR said it would cost is what it cost, and the ports
+were what made the replacement one adapter each.
 
 ## Context
 

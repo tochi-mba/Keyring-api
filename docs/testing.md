@@ -43,6 +43,17 @@ which is how you find out.
 **Check the specification, not your own output.** TOTP is verified against RFC 6238's
 published vectors. Testing it against our own output would only prove it is self-consistent.
 
+**Test the outcome, not the mechanism.** The concurrency tests used to hold a store's
+`asyncio.Lock` and park every call on it, which proved the check and the write were under
+one lock. They now occupy the database's single worker thread instead, and assert what
+actually matters -- exactly one owner survives four simultaneous demotions. The first
+version would have had to be rewritten for any change of mechanism; this one would survive
+a move to a connection pool, because it never mentions one.
+
+**A restart is a test.** `tests/integration/test_restart.py` runs two apps in sequence over
+one database file. Every assertion in it was false before the storage migration, and none
+of them could have been written against the in-memory stores at all.
+
 ## What coverage found that review did not
 
 Coverage at 100% is not there for the number. Three genuine defects surfaced as uncovered

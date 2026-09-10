@@ -66,5 +66,8 @@ Tell the people you onboard.
 A stored site password is not revocable by you — only by that person changing it at the
 site. Prefer OAuth wherever a service offers it.
 
-Accounts and sessions are in memory in v1 ([ADR-0004](docs/adr/0004-in-memory-stores.md)):
-a restart loses them. Swap in a durable store before anyone else depends on it.
+Everything lives in one SQLite file ([ADR-0012](docs/adr/0012-sqlite.md)) -- accounts,
+sessions, profiles, roles, the audit log, and the encrypted credential material. Back it up
+with `VACUUM INTO` rather than `cp`, keep the master key somewhere else, and try a restore
+before you need one. It runs as a single process on purpose
+([ADR-0013](docs/adr/0013-single-process.md)).

@@ -41,20 +41,25 @@ src/keyring_api/
   domain/        pure types and rules: Account, Session, Grant, Profile, Connection,
                  Permission, Role. Imports nothing internal.
   audit/         the append-only record of privileged actions
-  secrets/       SecretStore port + envelope-encrypted file adapter. The only layer that
-                 sees plaintext credential material at rest.
+  storage/       the SQLite connection, the migrations, and how a datetime becomes a
+                 column. Knows about rows and transactions, and nothing else.
+  secrets/       SecretStore port, envelope crypto, and the SQL adapter. The only layer
+                 that sees plaintext credential material at rest.
   notifications/ EmailSender port, SMTP/file/disabled adapters, the outbox, templates
   accounts/      hashing, tokens, stores, roles, the account service, rate limiting,
                  JWT signing
-  profiles/      ProfileStore port + in-memory adapter
+  profiles/      ProfileStore port + SQL adapter
   credentials/   the four consumption ports, the three credential kinds, OAuth, TOTP
   admin/         administrative operations over accounts, roles and others' profiles
   api/           FastAPI app, routers, wire schemas, problem+json errors, middleware
 ```
 
 Dependencies point inward:
-`api → admin → credentials → profiles → accounts → notifications → audit → secrets → domain`.
-`core` is a shared kernel everything may use, except `domain`.
+`api → admin → credentials → profiles → accounts → notifications → secrets → audit →
+storage → domain`. `core` is a shared kernel everything may use, except `domain`.
+
+A second contract keeps SQL out of `api`, `admin` and `domain`: a router that could write
+a query is a router that will eventually contain one.
 
 `admin/` started life inside `accounts/` and the layering contract rejected it — correctly.
 An administrative delete has to remove an account's credentials too, and a layer that must

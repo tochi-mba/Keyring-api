@@ -32,15 +32,19 @@ import-linter contracts in `pyproject.toml` rather than by convention.
                     │                 outbox, templates│
                     └───────────────┬──────────────────┘
                     ┌───────────────▼──────────────────┐
-                    │  audit/        privileged actions│
+                    │  secrets/      SecretStore +      │
+                    │                envelope crypto    │
                     └───────────────┬──────────────────┘
                     ┌───────────────▼──────────────────┐
-                    │  secrets/      SecretStore +     │
-                    │                encrypted files   │
+                    │  audit/        privileged actions │
                     └───────────────┬──────────────────┘
                     ┌───────────────▼──────────────────┐
-                    │  domain/       pure types & rules│
-                    │                (imports nothing) │
+                    │  storage/      one SQLite file,   │
+                    │                one thread         │
+                    └───────────────┬──────────────────┘
+                    ┌───────────────▼──────────────────┐
+                    │  domain/       pure types & rules │
+                    │                (imports nothing)  │
                     └──────────────────────────────────┘
 
   core/  config · clock · logging · request context · composition root
@@ -51,6 +55,11 @@ import-linter contracts in `pyproject.toml` rather than by convention.
 has to remove that account's *credentials* too. It began inside `accounts/`, the layering
 contract rejected it, and the contract was right: a layer that must reach sideways is a
 layer in the wrong place.
+
+`storage/` sits at the bottom because it knows about rows and transactions and nothing
+else -- not what an account is, not what a credential is. A second contract forbids `api/`,
+`admin/` and `domain/` from importing it at all: a router that *could* write a query is a
+router that will eventually contain one.
 
 ## The three ideas that shape everything
 
@@ -115,7 +124,7 @@ PUT /v1/admin/accounts/{id}/roles     Authorization: Bearer <session token>
   → look the target account up              ← 404 only for callers who passed the above
   → resolve the granted roles to permissions
   → require that set ⊆ the actor's own      ← the escalation guard
-  → write, with the last-owner check inside the store's lock
+  → write, with the last-owner check inside the store's transaction
   → record actor, action and target in the audit log
 ```
 
@@ -142,6 +151,38 @@ Both credentials are required because either alone is a hole. With only the serv
 token, anything that could reach keyring could request anybody's credential — the confused
 deputy, moved from inside one process to the gap between two.
 
+## How storage is serialized, and why it is not a lock
+
+Everything is one SQLite file ([ADR-0012](adr/0012-sqlite.md)). Every call goes through a
+single connection on a **single dedicated worker thread**, submitted as one whole callable
+-- so a transaction is indivisible by construction rather than by convention.
+
+The obvious alternative is `asyncio.to_thread` under an `asyncio.Lock`, and it is broken:
+cancelling the awaiting task releases the lock but does not cancel the thread, so the next
+caller enters the same connection while the first is still mid-transaction. A client
+disconnecting cancels its request task, so that is an ordinary Tuesday. The single-worker
+executor removes the failure rather than patching it, because serialization stops depending
+on a lock that cancellation can drop.
+
+The cost is worth knowing: **a cancelled request's write may still commit**, since the
+queued callable runs to completion regardless of who is still waiting for it.
+
+Four invariants live in that indivisibility, and each was a race that a caller doing it in
+two steps would lose:
+
+| Invariant | How |
+| --- | --- |
+| The last owner survives | The check and the write are one `BEGIN IMMEDIATE` transaction |
+| A grant is redeemed once | One `UPDATE ... WHERE redeemed_at IS NULL RETURNING` |
+| A held role cannot be deleted | `ON DELETE RESTRICT` on `account_roles.role_name` |
+| Deleting an account takes everything | `ON DELETE CASCADE`, in one transaction |
+
+One driver detail is load-bearing enough to state here: `PRAGMA foreign_keys` defaults to
+off, is per-connection, and is a **silent no-op while a transaction is open**. Through a
+driver that opens implicit transactions it can report success and leave every foreign key
+in the schema decorative. The connection is therefore opened with explicit transaction
+control, and the setting is read back and verified rather than assumed.
+
 ## Where each secret lives, and how long
 
 | Thing | Stored as | Lifetime |
@@ -155,8 +196,9 @@ deputy, moved from inside one process to the gap between two.
 | API key, password, TOTP seed | AES-256-GCM, envelope | until deleted |
 
 Nothing a caller presents is stored in a form that could be presented back. A database
-dump yields no usable session, invite or reset; the credential files need the master key,
-which is not in the database.
+dump yields no usable session, invite or reset, and the credential rows need the master
+key, which is not in the database. There is a test that writes a known secret, checkpoints
+the write-ahead log, and scans every byte the database owns for it.
 
 ## Testing strategy
 

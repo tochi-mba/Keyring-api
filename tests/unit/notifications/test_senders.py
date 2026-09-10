@@ -48,6 +48,24 @@ class TestPortConformance:
 
             assert isinstance(checked, EmailSender)
 
+    def test_every_adapter_says_whether_it_delivers(self, tmp_path: Path) -> None:
+        """Asserted here rather than left to the isinstance check above.
+
+        Until Python 3.12, `isinstance` against a runtime-checkable Protocol called
+        `getattr` for each member, which *executed* the `is_enabled` property and made it
+        look covered. 3.12 switched to `getattr_static`, so it does not -- and what that
+        exposed was a genuine gap: nothing asserted that the two sending adapters report
+        themselves enabled.
+
+        Which matters more than a coverage number. The API reads `is_enabled` to decide
+        whether to return an invite token in the HTTP response or rely on it arriving by
+        mail. A sender that wrongly reported itself disabled would put a live token in a
+        response body *and* an inbox.
+        """
+        assert FileEmailSender(directory=tmp_path).is_enabled is True
+        assert SmtpEmailSender(EmailSettings()).is_enabled is True
+        assert DisabledEmailSender().is_enabled is False
+
 
 class TestDisabled:
     async def test_it_is_the_default(self) -> None:

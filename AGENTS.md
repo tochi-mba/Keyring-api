@@ -24,6 +24,7 @@ contract rather than decoration — see [Invariants](#invariants).
 | --- | --- |
 | `make install` | Create the venv and install everything. |
 | `make check` | **The gate.** Format check, lint, strict types, layering contracts, tests at 100% branch coverage. Run before every commit. |
+| `make matrix` | The tests on every Python CI runs. A green `check` is one interpreter's opinion; coverage genuinely differs between versions. Run before pushing. |
 | `make test` | Tests only. |
 | `make fmt` | Format and auto-fix. |
 | `make run` | Serve on :8001 with reload. Docs at `/docs`. |

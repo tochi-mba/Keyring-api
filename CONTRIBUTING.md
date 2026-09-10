@@ -20,8 +20,10 @@ Optionally `pre-commit install` — a fast subset of `make check` on staged file
 1. Write the test first. Watch it fail for the reason you expect.
 2. Write the smallest implementation that passes.
 3. Refactor with the test as a safety net.
-4. `make check` before every commit. Never pipe it to `head` or `tail` — that masks the
-   exit code, which is how a broken commit slips through.
+4. `make check` before every commit, and `make matrix` before pushing — `check` runs one
+   interpreter, and coverage genuinely differs between the versions CI tests. Never pipe
+   either to `head` or `tail`: that masks the exit code, which is how a broken commit
+   slips through.
 
 ## This is a credential vault
 

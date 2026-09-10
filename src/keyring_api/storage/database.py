@@ -44,6 +44,14 @@ verified rather than assumed.
 partway through: the deferred form is where ``SQLITE_BUSY`` and writer deadlock live, and
 the immediate form is what makes a check-then-write pair serializable even if a
 connection pool ever replaces the single connection here.
+
+## The file mode matters as much as the cipher
+
+SQLite creates its files 0644, which would put every password hash, session token hash
+and address in this service in a file any user on the machine can read. Encryption
+defends against a stolen disk; the mode defends against every other process on the box,
+which is by far the likelier reader. The credential material is encrypted either way --
+but the rest of the database is not, and never was going to be.
 """
 
 from __future__ import annotations
@@ -62,6 +70,16 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 T = TypeVar("T")
+
+DATABASE_FILE_MODE = 0o600
+"""Owner-only. SQLite would otherwise create these 0644; see the module docstring."""
+
+SIDECARS = ("-wal", "-shm")
+"""The write-ahead log and its shared-memory index, which hold data like the file does.
+
+SQLite gives a WAL file the permissions of the database it belongs to, so these only need
+setting for sidecars that already exist by the time the mode is applied.
+"""
 
 CONNECT_PRAGMAS: tuple[str, ...] = (
     "PRAGMA journal_mode = WAL",
@@ -100,6 +118,21 @@ def require_foreign_keys(connection: sqlite3.Connection) -> None:
         raise StorageError(msg)
 
 
+def make_private(path: Path) -> None:
+    """Make the database and its sidecars readable only by the account running us.
+
+    Applied after opening rather than before, because there is nothing to chmod until
+    SQLite has created the file -- which leaves a window where a fresh database exists at
+    0644. It is one open() wide, on a file with nothing in it yet, and closing it properly
+    would mean pre-creating the file ourselves and hoping SQLite agreed with the result.
+    """
+    path.chmod(DATABASE_FILE_MODE)
+    for suffix in SIDECARS:
+        sidecar = path.with_name(path.name + suffix)
+        if sidecar.exists():
+            sidecar.chmod(DATABASE_FILE_MODE)
+
+
 class Database:
     """The one way into the SQLite file.
 
@@ -121,7 +154,9 @@ class Database:
         return self._path
 
     def _connect(self) -> sqlite3.Connection:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        # mode applies only to directories this creates; an existing one is left alone,
+        # because the configured path names a file and its parent may not be ours.
+        self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         connection = sqlite3.connect(self._path, isolation_level=None)
         connection.row_factory = sqlite3.Row
 
@@ -132,6 +167,8 @@ class Database:
                 journal_mode = str(row[0])
 
         require_foreign_keys(connection)
+        # After the pragmas, because switching to WAL is what creates the sidecars.
+        make_private(self._path)
         logger.info("database_opened", journal_mode=journal_mode)
         return connection
 

@@ -39,8 +39,14 @@ from keyring_api.storage.database import Database
 from keyring_api.storage.migrator import migrate
 
 if TYPE_CHECKING:
+    from keyring_api.accounts.ratelimit import RateLimiter
+    from keyring_api.accounts.roles import RoleStore
+    from keyring_api.accounts.store import AccountStore, GrantStore, SessionStore
+    from keyring_api.audit.log import AuditLog
     from keyring_api.core.clock import Clock
     from keyring_api.core.config import Settings
+    from keyring_api.profiles.store import ProfileStore
+    from keyring_api.secrets.base import SecretStore
 
 logger = get_logger(__name__)
 
@@ -55,15 +61,18 @@ class Container:
     settings: Settings
     clock: Clock
     database: Database
-    accounts: SqlAccountStore
-    sessions: SqlSessionStore
-    grants: SqlGrantStore
-    limiter: InMemoryRateLimiter
-    profiles: SqlProfileStore
-    secrets: SqlSecretStore
+    # The ports, not the adapters. Annotating these with the concrete classes made every
+    # consumer of the container depend on which adapter was wired, which is the one thing
+    # a composition root exists to keep from happening.
+    accounts: AccountStore
+    sessions: SessionStore
+    grants: GrantStore
+    limiter: RateLimiter
+    profiles: ProfileStore
+    secrets: SecretStore
     outbox: Outbox
-    roles: SqlRoleStore
-    audit: SqlAuditLog
+    roles: RoleStore
+    audit: AuditLog
     account_service: AccountService
     credential_service: CredentialService
     admin_service: AdminService

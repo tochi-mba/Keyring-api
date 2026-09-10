@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import stat
 import threading
 from functools import partial
 from typing import TYPE_CHECKING
@@ -21,8 +22,10 @@ import pytest
 
 from keyring_api.storage.database import (
     CONNECT_PRAGMAS,
+    DATABASE_FILE_MODE,
     Database,
     StorageError,
+    make_private,
     require_foreign_keys,
 )
 
@@ -274,3 +277,67 @@ class TestClosing:
             await second.aclose()
 
         assert [row["x"] for row in rows] == ["kept"]
+
+
+class TestFileMode:
+    """The protection the file store had and SQLite does not give by default.
+
+    SQLite creates its files 0644. The credential material in them is encrypted, but the
+    password hashes, session token hashes and addresses are not, and never were going to
+    be -- so the mode is doing real work here rather than belt-and-braces.
+    """
+
+    async def test_the_database_is_readable_only_by_its_owner(self, db: Database) -> None:
+        assert stat.S_IMODE(db.path.stat().st_mode) == DATABASE_FILE_MODE
+
+    async def test_the_write_ahead_log_is_too(self, db: Database) -> None:
+        # It holds committed rows that have not been checkpointed yet, so a readable WAL
+        # is a readable database with extra steps.
+        await db.execute("INSERT INTO t (x, y) VALUES (1, 'a')")
+        wal = db.path.with_name(db.path.name + "-wal")
+
+        assert wal.exists()
+        assert stat.S_IMODE(wal.stat().st_mode) == DATABASE_FILE_MODE
+
+    async def test_reopening_does_not_loosen_it(self, tmp_path: Path) -> None:
+        path = tmp_path / "reopened.db"
+        first = Database(path)
+        await first.execute("CREATE TABLE t (x TEXT NOT NULL) STRICT")
+        await first.aclose()
+        path.chmod(0o644)
+
+        second = Database(path)
+        try:
+            assert stat.S_IMODE(path.stat().st_mode) == DATABASE_FILE_MODE
+        finally:
+            await second.aclose()
+
+    async def test_a_directory_it_creates_is_owner_only(self, tmp_path: Path) -> None:
+        # A world-readable directory says which files exist even when none can be read.
+        database = Database(tmp_path / "fresh" / "keyring.db")
+        try:
+            assert stat.S_IMODE((tmp_path / "fresh").stat().st_mode) == 0o700
+        finally:
+            await database.aclose()
+
+    async def test_it_leaves_an_existing_directory_alone(self, tmp_path: Path) -> None:
+        # The configured path names a file, so its parent may be somewhere shared that
+        # this service has no business tightening -- /var/lib, at the extreme.
+        existing = tmp_path / "shared"
+        existing.mkdir(mode=0o755)
+
+        database = Database(existing / "keyring.db")
+        try:
+            assert stat.S_IMODE(existing.stat().st_mode) == 0o755
+        finally:
+            await database.aclose()
+
+    def test_the_helper_skips_sidecars_that_are_not_there(self, tmp_path: Path) -> None:
+        # Called on a database with no WAL yet -- which is what happens if the journal
+        # mode did not take -- and must not fail for the file it cannot find.
+        lonely = tmp_path / "lonely.db"
+        lonely.touch()
+
+        make_private(lonely)
+
+        assert stat.S_IMODE(lonely.stat().st_mode) == DATABASE_FILE_MODE

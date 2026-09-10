@@ -645,9 +645,18 @@ class TestGrantStore:
         assert await store.purge_expired(now=EPOCH + timedelta(hours=1)) == 1
         assert await store.get_by_token_hash("old") is None
 
-    async def test_deleting_an_account_takes_its_grants_with_it(self, store: SqlGrantStore) -> None:
-        await store.add(make_grant(token_hash="mine", account_id="acct_1"))
+    async def test_an_invite_issued_to_an_address_survives_an_unrelated_deletion(
+        self, store: SqlGrantStore, accounts: SqlAccountStore
+    ) -> None:
+        # An invite names an address rather than an account, so there is no account to
+        # cascade it -- which is right: the address has not been invited any less because
+        # somebody else's account went.
+        await store.add(make_grant(token_hash="invite", email="newcomer@example.com"))
+        await store.add(make_grant(token_hash="reset", account_id="acct_1"))
         await store.add(make_grant(token_hash="theirs", account_id="acct_2"))
 
-        assert await store.delete_for_account("acct_1") == 1
+        await accounts.delete("acct_1")
+
+        assert await store.get_by_token_hash("reset") is None
+        assert await store.get_by_token_hash("invite") is not None
         assert await store.get_by_token_hash("theirs") is not None

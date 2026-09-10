@@ -48,6 +48,8 @@ from keyring_api.domain.rbac import (
 from tests.fakes.clock import EPOCH, FakeClock
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from keyring_api.core.config import Settings
 
 NOWHERE = "acct_never_existed"
@@ -103,8 +105,12 @@ def clock() -> FakeClock:
 
 
 @pytest.fixture
-def container(settings: Settings, clock: FakeClock) -> Container:
-    return Container.build(settings, clock=clock)
+async def container(settings: Settings, clock: FakeClock) -> AsyncIterator[Container]:
+    built = Container.build(settings, clock=clock)
+    try:
+        yield built
+    finally:
+        await built.aclose()
 
 
 @pytest.fixture

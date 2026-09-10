@@ -59,7 +59,14 @@ class AccountStore(Protocol):
         ...
 
     async def delete(self, account_id: str) -> bool:
-        """Remove an account. Returns whether there was one.
+        """Remove an account and everything that belongs to it. Returns whether there was one.
+
+        The cascade is part of the contract, not an implementation detail: sessions,
+        grants, profiles, connections, roles and stored credential material all go, and
+        they go in the same operation. A caller doing it in steps has a middle, and a
+        failure in that middle leaves credential material with no account referencing it
+        -- unreachable through the API, invisible to every later delete, and still
+        decryptable by anyone holding the master key.
 
         Raises:
             LastOwnerError: if it holds the last owner role.
@@ -165,10 +172,6 @@ class GrantStore(Protocol):
 
     async def revoke_all_for_account(self, account_id: str, purpose: GrantPurpose) -> int:
         """Invalidate every outstanding grant of one purpose for an account."""
-        ...
-
-    async def delete_for_account(self, account_id: str) -> int:
-        """Remove every grant belonging to an account, for a cascading delete."""
         ...
 
     async def purge_expired(self, *, now: datetime) -> int:

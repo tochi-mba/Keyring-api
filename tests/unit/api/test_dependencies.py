@@ -15,12 +15,18 @@ from keyring_api.domain.sessions import Session, new_session_id
 from tests.fakes.clock import EPOCH, FakeClock
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from keyring_api.core.config import Settings
 
 
 @pytest.fixture
-def container(settings: Settings) -> Container:
-    return Container.build(settings, clock=FakeClock())
+async def container(settings: Settings) -> AsyncIterator[Container]:
+    built = Container.build(settings, clock=FakeClock())
+    try:
+        yield built
+    finally:
+        await built.aclose()
 
 
 def bearer(token: str) -> HTTPAuthorizationCredentials:

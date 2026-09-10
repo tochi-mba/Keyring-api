@@ -556,16 +556,17 @@ class AccountService:
     # -- Deletion ----------------------------------------------------------------------
 
     async def delete_account(self, account_id: str) -> bool:
-        """Remove an account and everything that authenticates as it.
+        """Remove an account and everything it owns.
 
-        Returns whether there was an account. Profiles and stored secrets are cascaded
-        by the caller that owns them -- see the container's ``delete_account``.
+        Returns whether there was an account. Sessions, grants, profiles, connections,
+        roles and credential material all go with it, in the same operation -- see
+        :meth:`~keyring_api.accounts.store.AccountStore.delete`. This used to be a
+        sequence of calls here, and a sequence has a middle: a failure partway left an
+        account gone and its credentials behind, decryptable and unreachable.
         """
         if not await self._accounts.delete(account_id):
             return False
 
-        await self._sessions.revoke_all(account_id)
-        await self._grants.delete_for_account(account_id)
         logger.info("account_deleted", subject_id=account_id)
         return True
 

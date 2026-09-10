@@ -92,10 +92,6 @@ class ProfileStore(Protocol):
         """Remove a profile. Returns whether there was one."""
         ...
 
-    async def delete_for_account(self, account_id: str) -> int:
-        """Remove every profile an account owns, for a cascading delete."""
-        ...
-
     async def count_for_account(self, account_id: str) -> int:
         """How many profiles this account has, for the per-account cap."""
         ...

@@ -188,12 +188,16 @@ async def test_deleting_an_unknown_profile_reports_that_nothing_went(
     assert not await store.delete("acct_1", "personal")
 
 
-async def test_deleting_an_account_takes_only_its_own_profiles(store: SqlProfileStore) -> None:
+async def test_deleting_an_account_takes_only_its_own_profiles(
+    store: SqlProfileStore, database: Database
+) -> None:
     await store.add(make_profile("acct_a", "one"), cap=CAP)
     await store.add(make_profile("acct_a", "two"), cap=CAP)
     await store.add(make_profile("acct_b", "one"), cap=CAP)
 
-    assert await store.delete_for_account("acct_a") == 2
+    await SqlAccountStore(database=database).delete("acct_a")
+
+    assert await store.count_for_account("acct_a") == 0
     assert await store.count_for_account("acct_b") == 1
 
 

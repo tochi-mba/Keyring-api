@@ -114,9 +114,6 @@ class SqlSecretStore:
             (account_id, profile),
         )
 
-    async def delete_account(self, account_id: str) -> int:
-        return await self._db.execute("DELETE FROM secrets WHERE account_id = ?", (account_id,))
-
 
 def _envelope_of(row: sqlite3.Row) -> Envelope:
     return Envelope(

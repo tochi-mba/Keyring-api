@@ -12,16 +12,19 @@ plaintext -- a cruder question than "is this file 0600", and a more direct one.
 
 from __future__ import annotations
 
+import sqlite3
 from typing import TYPE_CHECKING
 
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from keyring_api.accounts.sql_store import SqlAccountStore
+from keyring_api.domain.accounts import Account
 from keyring_api.domain.errors import CredentialUnavailableError, VaultSealedError
 from keyring_api.secrets.base import Secret, SecretStore
 from keyring_api.secrets.sql import SqlSecretStore
-from tests.fakes.clock import FakeClock
+from tests.fakes.clock import EPOCH, FakeClock
 
 if TYPE_CHECKING:
     from keyring_api.storage.database import Database
@@ -33,7 +36,24 @@ SECRET: Secret = {"access_token": "abc", "refresh_token": "def"}
 
 
 @pytest.fixture
-def store(database: Database) -> SqlSecretStore:
+async def store(database: Database) -> SqlSecretStore:
+    """A store, and the two accounts whose material it holds.
+
+    Credential material is foreign-keyed to its account, so the accounts have to exist.
+    That key is what makes deleting an account take its credentials with it in the same
+    transaction, rather than in a second call that can fail on its own.
+    """
+    accounts = SqlAccountStore(database=database)
+    for account_id in (ACCOUNT, "acct_2"):
+        await accounts.add(
+            Account(
+                account_id=account_id,
+                email=f"{account_id}@example.com",
+                password_hash="$argon2id$fake",
+                created_at=EPOCH,
+                updated_at=EPOCH,
+            )
+        )
     return SqlSecretStore(database=database, master_key=KEY, clock=FakeClock())
 
 
@@ -167,7 +187,11 @@ class TestNothingLegibleOnDisk:
 
 class TestSealedVault:
     @pytest.fixture
-    def sealed(self, database: Database) -> SqlSecretStore:
+    def sealed(
+        self,
+        database: Database,
+        store: SqlSecretStore,  # noqa: ARG002 -- creates the accounts the rows need
+    ) -> SqlSecretStore:
         return SqlSecretStore(database=database, master_key=None, clock=FakeClock())
 
     async def test_reading_from_a_sealed_vault_fails_with_the_fix(
@@ -202,7 +226,7 @@ class TestSealedVault:
         sealed, rather than leaving material behind until somebody finds the key.
         """
         assert await sealed.delete(ACCOUNT, "personal", "spotify") is False
-        assert await sealed.delete_account(ACCOUNT) == 0
+        assert await sealed.delete_profile(ACCOUNT, "personal") == 0
 
 
 class TestIsolation:
@@ -220,16 +244,32 @@ class TestIsolation:
         assert await store.get(ACCOUNT, "personal", "spotify") == {"access_token": "mine"}
         assert await store.get("acct_2", "personal", "spotify") == {"access_token": "theirs"}
 
-    async def test_deleting_an_account_takes_every_secret_it_owns(
-        self, store: SqlSecretStore
+    async def test_deleting_the_account_takes_every_secret_it_owns(
+        self, store: SqlSecretStore, database: Database
     ) -> None:
+        """The cascade, and it is the schema's rather than a second call.
+
+        This used to be an explicit sweep the admin service ran after deleting the
+        account row, with a documented lesser harm if it failed: material left behind
+        with nothing referencing it, unreachable through the API and still decryptable.
+        """
         await store.put(ACCOUNT, "personal", "spotify", SECRET)
         await store.put(ACCOUNT, "work", "tmdb", SECRET)
         await store.put("acct_2", "personal", "spotify", SECRET)
 
-        assert await store.delete_account(ACCOUNT) == 2
+        await SqlAccountStore(database=database).delete(ACCOUNT)
+
         assert await store.get(ACCOUNT, "personal", "spotify") is None
+        assert await store.get(ACCOUNT, "work", "tmdb") is None
         assert await store.get("acct_2", "personal", "spotify") == SECRET
+
+    async def test_material_cannot_be_stored_for_an_account_that_does_not_exist(
+        self, store: SqlSecretStore
+    ) -> None:
+        # The other half of the key. Orphaned material is not merely collected on the way
+        # out -- it cannot be created.
+        with pytest.raises(sqlite3.IntegrityError):
+            await store.put("acct_nobody", "personal", "spotify", SECRET)
 
     async def test_deleting_a_profile_takes_only_that_profile_s_secrets(
         self, store: SqlSecretStore
@@ -250,23 +290,23 @@ class TestIsolation:
         assert await store.delete_profile("acct_2", "personal") == 1
         assert await store.get(ACCOUNT, "personal", "spotify") == SECRET
 
-    async def test_deleting_an_account_with_nothing_stored_is_not_an_error(
+    async def test_deleting_a_profile_with_nothing_stored_is_not_an_error(
         self, store: SqlSecretStore
     ) -> None:
-        assert await store.delete_account("acct_nobody") == 0
+        assert await store.delete_profile(ACCOUNT, "never-used") == 0
 
 
 class TestDurability:
     """The property the file store had and the in-memory stores did not."""
 
-    async def test_a_secret_survives_a_restart(self, database: Database) -> None:
+    async def test_a_secret_survives_a_restart(
+        self, database: Database, store: SqlSecretStore
+    ) -> None:
         from keyring_api.storage.database import Database as Db
         from keyring_api.storage.migrator import migrate
 
         path = database.path
-        await SqlSecretStore(database=database, master_key=KEY, clock=FakeClock()).put(
-            ACCOUNT, "personal", "spotify", SECRET
-        )
+        await store.put(ACCOUNT, "personal", "spotify", SECRET)
         await database.aclose()
 
         reopened = Db(path)

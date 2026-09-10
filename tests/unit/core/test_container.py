@@ -12,12 +12,18 @@ from keyring_api.core.container import Container
 from tests.fakes.clock import FakeClock
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from keyring_api.core.config import Settings
 
 
 @pytest.fixture
-def container(settings: Settings) -> Container:
-    return Container.build(settings, clock=FakeClock())
+async def container(settings: Settings) -> AsyncIterator[Container]:
+    built = Container.build(settings, clock=FakeClock())
+    try:
+        yield built
+    finally:
+        await built.aclose()
 
 
 def test_it_wires_every_dependency(container: Container) -> None:
@@ -25,20 +31,26 @@ def test_it_wires_every_dependency(container: Container) -> None:
     assert container.accounts is not None
 
 
-def test_uptime_starts_at_zero_and_advances_with_the_clock(settings: Settings) -> None:
+async def test_uptime_starts_at_zero_and_advances_with_the_clock(settings: Settings) -> None:
     clock = FakeClock()
     container = Container.build(settings, clock=clock)
+    try:
+        assert container.uptime_seconds == 0
 
-    assert container.uptime_seconds == 0
+        clock.advance(timedelta(seconds=30))
 
-    clock.advance(timedelta(seconds=30))
+        assert container.uptime_seconds == 30
+    finally:
+        await container.aclose()
 
-    assert container.uptime_seconds == 30
 
-
-def test_it_builds_a_real_clock_when_none_is_supplied(settings: Settings) -> None:
+async def test_it_builds_a_real_clock_when_none_is_supplied(settings: Settings) -> None:
     # The production path. Passing a clock is the test affordance, not the default.
-    assert Container.build(settings).uptime_seconds >= 0
+    container = Container.build(settings)
+    try:
+        assert container.uptime_seconds >= 0
+    finally:
+        await container.aclose()
 
 
 class TestSweeper:

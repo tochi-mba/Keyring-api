@@ -55,13 +55,3 @@ class SecretStore(Protocol):
     async def delete_profile(self, account_id: str, profile: str) -> int:
         """Remove every secret in one profile. Returns how many went."""
         ...
-
-    async def delete_account(self, account_id: str) -> int:
-        """Remove every secret an account owns. Returns how many went.
-
-        Deleting an account must leave nothing behind. Per-account data keys would allow
-        cryptographic shredding instead, but at this scale that is key-management
-        complexity bought for a property that deleting the files already provides
-        (ADR-0005).
-        """
-        ...

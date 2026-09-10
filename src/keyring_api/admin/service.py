@@ -232,6 +232,9 @@ class AdminService:
     async def delete_account(self, actor: Actor, account_id: str) -> None:
         """Delete an account and everything it owns.
 
+        Everything goes together: sessions, grants, profiles, connections, roles and
+        stored credential material. Nothing is destroyed if the deletion is refused.
+
         Raises:
             InsufficientPermissionError / AccountNotFoundError: as above.
             LastOwnerError: from the store, atomically -- the last owner cannot go.
@@ -239,22 +242,13 @@ class AdminService:
         actor.require(Permission.ACCOUNTS_DELETE)
         await self._check_can_act_on(actor, await self._require_account(account_id))
 
-        # The account row goes FIRST, because its deletion is what carries the atomic
-        # last-owner check. The other order destroys the vault and only then discovers
-        # the deletion is refused -- data loss wearing a refusal's clothes, with the
-        # caller told it did not happen.
-        #
-        # The cost of this order is the opposite failure: if the credential sweep below
-        # fails, encrypted files are left with no account referencing them. That is the
-        # lesser harm by a wide margin -- they are unreachable through the API, and an
-        # operator can remove the directory -- and it is logged rather than silent.
+        # One operation, not a sequence. It used to be two -- delete the account, then
+        # sweep the vault -- with the order chosen so that a refused deletion could not
+        # destroy anything first, and a documented lesser harm if the second half failed:
+        # credential material left with nothing referencing it. The store cascades now,
+        # so the refusal and the destruction are the same transaction and neither half
+        # can happen alone.
         await self._account_service.delete_account(account_id)
-
-        try:
-            await self._credential_service.delete_account_data(account_id)
-        except OSError:
-            logger.exception("orphaned_credentials", subject_id=account_id)
-
         await self._record(actor, AuditAction.ACCOUNT_DELETED, target_id=account_id)
 
     async def delete_profile(self, actor: Actor, account_id: str, name: str) -> None:

@@ -151,11 +151,6 @@ class CredentialService:
         logger.info("profile_deleted", profile=normalized)
         return True
 
-    async def delete_account_data(self, account_id: str) -> None:
-        """Remove every profile and secret an account owns, for a cascading delete."""
-        await self._profiles.delete_for_account(account_id)
-        await self._secrets.delete_account(account_id)
-
     # -- Storing credentials -----------------------------------------------------------
 
     # PLR0913: the address is three positional parts and the credential is three more.

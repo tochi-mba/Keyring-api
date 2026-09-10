@@ -25,14 +25,20 @@ from keyring_api.domain.rbac import ADMIN, ALL_PERMISSIONS, BUILTIN_ROLES, MEMBE
 from tests.fakes.clock import FakeClock
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from keyring_api.core.config import Settings
 
 PASSWORD = "correct horse battery staple"
 
 
 @pytest.fixture
-def container(settings: Settings) -> Container:
-    return Container.build(settings, clock=FakeClock())
+async def container(settings: Settings) -> AsyncIterator[Container]:
+    built = Container.build(settings, clock=FakeClock())
+    try:
+        yield built
+    finally:
+        await built.aclose()
 
 
 async def make_account(container: Container, email: str, roles: list[str]) -> str:

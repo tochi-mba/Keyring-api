@@ -154,9 +154,6 @@ class SqlProfileStore:
         )
         return deleted > 0
 
-    async def delete_for_account(self, account_id: str) -> int:
-        return await self._db.execute("DELETE FROM profiles WHERE account_id = ?", (account_id,))
-
     async def count_for_account(self, account_id: str) -> int:
         return await self._db.count(
             "SELECT count(*) AS total FROM profiles WHERE account_id = ?", (account_id,)

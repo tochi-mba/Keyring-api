@@ -82,8 +82,8 @@ CREATE TABLE schema_version (
     applied_at TEXT    NOT NULL
 ) STRICT
 ;
-CREATE TABLE secrets (
-    account_id   TEXT    NOT NULL,
+CREATE TABLE "secrets" (
+    account_id   TEXT    NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
     profile_name TEXT    NOT NULL,
     service      TEXT    NOT NULL,
     version      INTEGER NOT NULL,

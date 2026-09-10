@@ -69,7 +69,10 @@ async def test_an_account_deleted_between_the_two_reads_is_refused(
 
     container.account_service.resolve_session = resolve  # type: ignore[assignment,method-assign]
 
-    with pytest.raises(AuthenticationError):
-        await get_actor(
-            container, HTTPAuthorizationCredentials(scheme="Bearer", credentials="anything")
-        )
+    try:
+        with pytest.raises(AuthenticationError):
+            await get_actor(
+                container, HTTPAuthorizationCredentials(scheme="Bearer", credentials="anything")
+            )
+    finally:
+        await container.aclose()

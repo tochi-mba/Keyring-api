@@ -58,17 +58,16 @@ class TestApplying:
     async def test_it_builds_the_schema(self, blank: Database) -> None:
         applied = migrate(blank, now=EPOCH)
 
-        assert applied == 1
+        assert applied == len(discover())
         assert "accounts" in await table_names(blank)
 
     async def test_it_records_what_it_applied(self, blank: Database) -> None:
         migrate(blank, now=EPOCH)
 
-        row = await blank.fetch_one("SELECT version, applied_at FROM schema_version")
+        rows = await blank.fetch_all("SELECT version, applied_at FROM schema_version")
 
-        assert row is not None
-        assert row["version"] == 1
-        assert from_column(row["applied_at"]) == EPOCH
+        assert [row["version"] for row in rows] == [migration.version for migration in discover()]
+        assert from_column(rows[0]["applied_at"]) == EPOCH
 
     async def test_running_it_again_applies_nothing(self, blank: Database) -> None:
         migrate(blank, now=EPOCH)
@@ -153,7 +152,7 @@ class TestAtomicity:
         with pytest.raises(Exception, match="syntax error"):
             migrate(blank, now=EPOCH, directory=directory)
 
-        assert migrate(blank, now=EPOCH) == 1
+        assert migrate(blank, now=EPOCH) == len(discover())
 
 
 class TestSchemaSnapshot:

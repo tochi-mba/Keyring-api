@@ -206,14 +206,20 @@ class TestProfiles:
         assert not await service.delete_profile(ACCOUNT, "personal")
 
     async def test_deleting_an_account_removes_its_profiles_and_secrets(
-        self, service: CredentialService
+        self, service: CredentialService, database: Database
     ) -> None:
+        """No longer this service's job, and that is the point.
+
+        There used to be a delete_account_data() here that the admin service called after
+        deleting the account row -- a second step, with a documented lesser harm if it
+        failed. The account row's own deletion carries all of it now.
+        """
         await service.create_profile(ACCOUNT, "personal")
         await service.put_direct_credential(
             ACCOUNT, "personal", "tmdb", kind=CredentialKind.API_KEY, secret={"api_key": "abc"}
         )
 
-        await service.delete_account_data(ACCOUNT)
+        await SqlAccountStore(database=database).delete(ACCOUNT)
 
         assert await service.list_profiles(ACCOUNT) == []
         assert await service._secrets.get(ACCOUNT, "personal", "tmdb") is None

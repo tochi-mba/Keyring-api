@@ -23,7 +23,7 @@ async def dump() -> str:
     with tempfile.TemporaryDirectory() as scratch:
         database = Database(Path(scratch) / "schema.db")
         try:
-            await migrate(database, now=datetime(2026, 1, 1, tzinfo=UTC))
+            migrate(database, now=datetime(2026, 1, 1, tzinfo=UTC))
             rows = await database.fetch_all(
                 "SELECT type, name, sql FROM sqlite_master "
                 "WHERE sql IS NOT NULL ORDER BY type, name"

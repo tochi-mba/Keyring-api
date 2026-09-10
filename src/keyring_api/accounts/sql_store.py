@@ -331,9 +331,6 @@ class SqlGrantStore:
             (account_id, purpose.value),
         )
 
-    async def delete_for_account(self, account_id: str) -> int:
-        return await self._db.execute("DELETE FROM grants WHERE account_id = ?", (account_id,))
-
     async def purge_expired(self, *, now: datetime) -> int:
         return await self._db.execute("DELETE FROM grants WHERE expires_at <= ?", (to_column(now),))
 

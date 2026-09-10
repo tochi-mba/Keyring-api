@@ -35,7 +35,8 @@ STATUS_DEGRADED = "degraded"
 )
 async def get_health(container: ContainerDep, response: Response) -> HealthResponse:
     """Check every dependency and summarize."""
-    sealed = container.settings.master_key_bytes() is None
+    sealed = container.secrets.is_sealed
+    connections = await _connection_health(container)
 
     checks = {
         "accounts": CheckResult(
@@ -56,6 +57,13 @@ async def get_health(container: ContainerDep, response: Response) -> HealthRespo
                 "fix": "set KEYRING_MASTER_KEY" if sealed else None,
             },
         ),
+        "connections": CheckResult(
+            # Degraded when any stored credential has stopped working. This is where
+            # the check earns its place: an expired Spotify grant shows up here, with
+            # the fix, instead of as a job failing for no visible reason hours later.
+            status=STATUS_DEGRADED if connections["unusable"] else STATUS_OK,
+            detail=connections,
+        ),
     }
 
     healthy = all(check.status == STATUS_OK for check in checks.values())
@@ -69,3 +77,22 @@ async def get_health(container: ContainerDep, response: Response) -> HealthRespo
         uptime_seconds=round(container.uptime_seconds, 3),
         checks=checks,
     )
+
+
+async def _connection_health(container: ContainerDep) -> dict[str, object]:
+    """Count connections that can and cannot currently produce a credential.
+
+    Counts only. This endpoint is unauthenticated, so it must not name a person, a
+    profile, or which service somebody has connected -- only how many are unwell.
+    """
+    now = container.clock.now()
+    total = 0
+    unusable = 0
+
+    for profile in await container.profiles.all_profiles():
+        for connection in profile.connections:
+            total += 1
+            if not connection.is_usable(now=now):
+                unusable += 1
+
+    return {"total": total, "unusable": unusable}

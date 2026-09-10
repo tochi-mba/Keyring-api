@@ -57,6 +57,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_tags=[
             {"name": "health", "description": "Liveness and dependency checks."},
             {"name": "auth", "description": "Logging in, logging out, and passwords."},
+            {
+                "name": "profiles",
+                "description": "Credential sets and the services they connect to.",
+            },
+            {
+                "name": "oauth",
+                "description": "The provider callback, and keys for verifying tokens.",
+            },
+            {
+                "name": "internal",
+                "description": (
+                    "Service-to-service: resolving a credential for a user. Requires "
+                    "both a service token and that user's token."
+                ),
+            },
             {"name": "admin", "description": "Operator-only: invites and account status."},
         ],
     )

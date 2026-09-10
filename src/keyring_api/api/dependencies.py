@@ -11,15 +11,19 @@ the code rather than a convention that holds until someone forgets a decorator.
 from __future__ import annotations
 
 import hmac
+from collections.abc import Callable
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from keyring_api.admin.service import Actor
+from keyring_api.audit.log import BREAK_GLASS_ACTOR
 from keyring_api.core.container import Container
 from keyring_api.core.context import set_account_id
 from keyring_api.domain.accounts import Account
 from keyring_api.domain.errors import AuthenticationError
+from keyring_api.domain.rbac import ALL_PERMISSIONS, Permission
 from keyring_api.domain.sessions import Session
 
 bearer_scheme = HTTPBearer(auto_error=False, description="A session token from `login`.")
@@ -30,7 +34,6 @@ status and a different shape from every other failure this service produces.
 """
 
 MISSING_CREDENTIALS = "a session token is required"
-ADMIN_UNCONFIGURED = "administrative access is not configured on this deployment"
 
 
 def get_container(request: Request) -> Container:
@@ -95,29 +98,62 @@ async def get_current_account(container: ContainerDep, session: CurrentSessionDe
 CurrentAccountDep = Annotated[Account, Depends(get_current_account)]
 
 
-async def require_admin(
+async def get_actor(
     container: ContainerDep,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
-) -> None:
-    """Authorise an administrative request against the configured admin token.
+) -> Actor:
+    """Work out who is asking and what they may do.
 
-    Administration is the operator, not an account: there is no ``is_admin`` flag to be
-    granted by mistake, and no path by which a compromised account becomes one. The
-    token comes from the environment, the same place the master key does.
+    Two kinds of caller, tried in order:
+
+    **The break-glass token**, compared in constant time. It holds every permission and
+    exists for the situation roles cannot cover -- no owner can log in, or none exists
+    yet. Recorded in the audit log as ``break-glass``, conspicuously, because an audit
+    log full of it means somebody is using the recovery path as a convenience.
+
+    **A session**, resolved to its account and then to that account's roles. Resolved on
+    every request rather than cached on the session or baked into a token: that is what
+    makes revoking a role take effect on the very next request rather than at next login.
 
     Raises:
-        AuthenticationError: no token, the wrong token, or none configured.
+        AuthenticationError: no credentials, or ones that are neither.
     """
-    expected = container.settings.admin_token
-    if expected is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=ADMIN_UNCONFIGURED
-        )
-
-    if credentials is None or not hmac.compare_digest(
-        credentials.credentials, expected.get_secret_value()
-    ):
+    if credentials is None:
         raise AuthenticationError(MISSING_CREDENTIALS)
 
+    admin_token = container.settings.admin_token
+    if admin_token is not None and hmac.compare_digest(
+        credentials.credentials, admin_token.get_secret_value()
+    ):
+        set_account_id(BREAK_GLASS_ACTOR)
+        return Actor(account_id=BREAK_GLASS_ACTOR, permissions=ALL_PERMISSIONS, is_break_glass=True)
 
-AdminDep = Annotated[None, Depends(require_admin)]
+    session = await container.account_service.resolve_session(credentials.credentials)
+    account = await container.accounts.get(session.account_id)
+    if account is None:
+        raise AuthenticationError(MISSING_CREDENTIALS)
+
+    set_account_id(account.account_id)
+    return await container.actor_for(account.account_id, account.roles)
+
+
+ActorDep = Annotated[Actor, Depends(get_actor)]
+
+
+def requires(permission: Permission) -> Callable[[Actor], Actor]:
+    """Build a dependency that admits only actors holding ``permission``.
+
+    Used as a route dependency so the requirement is declared next to the route and shows
+    up in the OpenAPI document, rather than being an ``if`` somewhere inside a handler
+    that a later edit can drop.
+
+    It does not replace the check inside the service. Both exist deliberately: the route
+    dependency is the one a reader sees, and the service check is the one that still
+    holds when a handler is called from somewhere else.
+    """
+
+    def guard(actor: ActorDep) -> Actor:
+        actor.require(permission)
+        return actor
+
+    return guard

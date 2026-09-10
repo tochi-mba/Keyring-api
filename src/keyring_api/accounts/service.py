@@ -42,9 +42,12 @@ from keyring_api.domain.errors import (
     AuthenticationError,
     InvalidEmailError,
     InvalidGrantError,
+    RateLimitedError,
 )
 from keyring_api.domain.grants import Grant, GrantPurpose, new_grant_id
+from keyring_api.domain.rbac import DEFAULT_ROLE, OWNER
 from keyring_api.domain.sessions import Session, new_session_id
+from keyring_api.notifications.templates import invite_message, reset_message
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -54,6 +57,7 @@ if TYPE_CHECKING:
     from keyring_api.accounts.store import AccountStore, GrantStore, SessionStore
     from keyring_api.core.clock import Clock
     from keyring_api.core.config import Settings
+    from keyring_api.notifications.outbox import Outbox
 
 logger = get_logger(__name__)
 
@@ -66,6 +70,14 @@ BAD_GRANT = "this link is invalid or has expired"
 SCOPE_LOGIN = "login"
 SCOPE_RESET = "reset"
 SCOPE_INVITE = "invite"
+SCOPE_RESET_RECIPIENT = "reset-recipient"
+"""Caps how often one *address* is mailed, whoever asks.
+
+The per-caller limit stops one attacker hammering the endpoint. This stops many callers,
+or one behind changing addresses, from using password reset to flood somebody else's
+inbox -- an attack that costs the attacker nothing and lands entirely on a third party.
+Keyed by a hash of the address so the limiter never holds plaintext addresses.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +126,7 @@ class AccountService:
         grants: GrantStore,
         hasher: PasswordHasher,
         limiter: RateLimiter,
+        outbox: Outbox,
         clock: Clock,
         settings: Settings,
     ) -> None:
@@ -122,8 +135,18 @@ class AccountService:
         self._grants = grants
         self._hasher = hasher
         self._limiter = limiter
+        self._outbox = outbox
         self._clock = clock
         self._settings = settings
+
+    @property
+    def delivers_email(self) -> bool:
+        """Whether tokens reach people by mail rather than through the operator.
+
+        The API reads this to decide whether to return an invite token in its response.
+        With delivery on, the token exists in exactly one place: the recipient's inbox.
+        """
+        return self._outbox.is_enabled
 
     # -- Invites -----------------------------------------------------------------------
 
@@ -147,6 +170,14 @@ class AccountService:
             purpose=GrantPurpose.INVITE,
             ttl_seconds=self._settings.invite_ttl_seconds,
             email=address,
+        )
+        self._outbox.enqueue(
+            invite_message(
+                to_address=address,
+                token=grant.token,
+                expires_in_days=round(self._settings.invite_ttl_seconds / 86_400),
+                link_base_url=self._settings.email.link_base_url,
+            )
         )
         logger.info("invite_issued", grant_id=grant.grant_id)
         return grant
@@ -180,14 +211,25 @@ class AccountService:
             raise InvalidGrantError(BAD_GRANT)
 
         now = self._clock.now()
+        # The first account to exist becomes the owner. Somebody has to be able to
+        # appoint owners, and appointing one requires already being one -- so without
+        # this a fresh deployment could only ever be administered through the
+        # break-glass token. Every subsequent account gets the default role, which has
+        # no administrative permissions at all.
+        first = await self._accounts.count() == 0
+        roles = (OWNER,) if first else (DEFAULT_ROLE,)
+
         account = Account(
             account_id=new_account_id(),
             email=grant.email,
             password_hash=self._hasher.hash(password),
             created_at=now,
             updated_at=now,
+            roles=roles,
         )
         await self._accounts.add(account)
+        if first:
+            logger.info("first_account_became_owner", subject_id=account.account_id)
 
         await self._limiter.reset(SCOPE_INVITE, caller)
         logger.info("account_created", created_account_id=account.account_id)
@@ -390,6 +432,14 @@ class AccountService:
             logger.info("password_reset_requested", outcome="no_such_account")
             return None
 
+        if not await self._may_mail(account.email):
+            # Refused silently. Raising here, or returning anything different, would tell
+            # the caller that this address is real -- which is exactly what the identical
+            # response elsewhere in this method exists to hide. The person keeps whatever
+            # link was already sent.
+            logger.info("password_reset_requested", outcome="recipient_rate_limited")
+            return None
+
         # Any older link dies now. Two live links means the older one is still a
         # password sitting in an inbox after the newer one has been used.
         await self._grants.revoke_all_for_account(account.account_id, GrantPurpose.PASSWORD_RESET)
@@ -399,7 +449,50 @@ class AccountService:
             ttl_seconds=self._settings.reset_ttl_seconds,
             account_id=account.account_id,
         )
+        # Queued, not awaited. If a real address meant waiting for an SMTP round trip and
+        # an unknown one returned at once, the response *time* would say which -- rebuilding
+        # the enumeration oracle the identical body was there to close.
+        self._outbox.enqueue(
+            reset_message(
+                to_address=account.email,
+                token=grant.token,
+                expires_in_minutes=round(self._settings.reset_ttl_seconds / 60),
+                link_base_url=self._settings.email.link_base_url,
+            )
+        )
         logger.info("password_reset_requested", outcome="issued", grant_id=grant.grant_id)
+        return grant
+
+    async def issue_reset_for(self, account: Account) -> IssuedGrant:
+        """Mint a reset token for an account an administrator named.
+
+        Bypasses the per-caller rate limit and the identical-response rule, both of which
+        exist to stop a *stranger* probing addresses. The caller here is already
+        authenticated and already holds a permission that says they may do this; the
+        audit log is what holds them to it.
+
+        The per-recipient mail cap still applies, so this cannot be used to flood
+        somebody's inbox either.
+        """
+        if not await self._may_mail(account.email):
+            msg = "that address has been sent too many messages recently"
+            raise RateLimitedError(msg, retry_after_seconds=self._settings.email.window_seconds)
+
+        await self._grants.revoke_all_for_account(account.account_id, GrantPurpose.PASSWORD_RESET)
+        grant = await self._mint_grant(
+            purpose=GrantPurpose.PASSWORD_RESET,
+            ttl_seconds=self._settings.reset_ttl_seconds,
+            account_id=account.account_id,
+        )
+        self._outbox.enqueue(
+            reset_message(
+                to_address=account.email,
+                token=grant.token,
+                expires_in_minutes=round(self._settings.reset_ttl_seconds / 60),
+                link_base_url=self._settings.email.link_base_url,
+            )
+        )
+        logger.info("password_reset_issued_by_admin", subject_id=account.account_id)
         return grant
 
     async def redeem_password_reset(self, *, token: str, new_password: str, caller: str) -> Account:
@@ -490,6 +583,19 @@ class AccountService:
         )
 
     # -- Shared ------------------------------------------------------------------------
+
+    async def _may_mail(self, address: str) -> bool:
+        """Whether this address may be mailed again inside the window."""
+        try:
+            await self._limiter.check(
+                SCOPE_RESET_RECIPIENT,
+                hash_token(address),
+                limit=self._settings.email.max_messages_per_address_per_window,
+                window_seconds=self._settings.email.window_seconds,
+            )
+        except RateLimitedError:
+            return False
+        return True
 
     async def _mint_grant(
         self,

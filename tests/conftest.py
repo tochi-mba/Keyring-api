@@ -13,6 +13,7 @@ from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
 from keyring_api.api.app import create_app
+from keyring_api.api.routers.internal import USER_TOKEN_HEADER
 from keyring_api.core.config import Argon2Settings, LogFormat, RateLimitSettings, Settings
 
 if TYPE_CHECKING:
@@ -25,6 +26,8 @@ ADMIN_TOKEN = "test-admin-token"
 EMAIL = "person@example.com"
 PASSWORD = "correct horse battery staple"
 MASTER_KEY = base64.b64encode(bytes(range(32))).decode()
+SERVICE_NAME = "media-tool"
+SERVICE_TOKEN = "test-service-token"
 
 
 def build_settings(tmp_path: Path, **overrides: Any) -> Settings:
@@ -41,6 +44,7 @@ def build_settings(tmp_path: Path, **overrides: Any) -> Settings:
         "log_format": LogFormat.CONSOLE,
         "admin_token": ADMIN_TOKEN,
         "master_key": MASTER_KEY,
+        "service_tokens": {SERVICE_NAME: SERVICE_TOKEN},
         # Argon2 at production cost is ~50ms a call by design; the suite does hundreds.
         "argon2": Argon2Settings(time_cost=1, memory_cost_kib=8, parallelism=1),
         # High enough that ordinary cases never trip a limit by accident. Tests that are
@@ -81,12 +85,16 @@ def container_of(app: FastAPI) -> Any:
     return app.state.container
 
 
-async def invite(client: AsyncClient, email: str = EMAIL) -> str:
-    """Mint an invite as the administrator and return its token."""
+async def invite(client: AsyncClient, email: str = EMAIL, *, as_token: str = ADMIN_TOKEN) -> str:
+    """Mint an invite and return its token.
+
+    Defaults to the break-glass admin token, which is how a fresh deployment gets its
+    first account -- there is nobody to authorise it yet.
+    """
     response = await client.post(
         "/v1/admin/invites",
         json={"email": email},
-        headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
+        headers={"Authorization": f"Bearer {as_token}"},
     )
     assert response.status_code == 201, response.text
     token: str = response.json()["token"]
@@ -115,3 +123,75 @@ async def log_in(client: AsyncClient, email: str = EMAIL, password: str = PASSWO
 def auth(token: str) -> dict[str, str]:
     """The Authorization header for a session token."""
     return {"Authorization": f"Bearer {token}"}
+
+
+async def make_profile(client: AsyncClient, token: str, name: str = "personal") -> str:
+    """Create a profile and return its name."""
+    response = await client.post("/v1/profiles", json={"name": name}, headers=auth(token))
+    assert response.status_code == 201, response.text
+    created: str = response.json()["name"]
+    return created
+
+
+async def put_api_key(
+    client: AsyncClient,
+    token: str,
+    *,
+    profile: str = "personal",
+    service: str = "tmdb",
+    key: str = "the-api-key",
+) -> None:
+    """Store an API key credential."""
+    response = await client.put(
+        f"/v1/profiles/{profile}/connections/{service}/api-key",
+        json={"api_key": key},
+        headers=auth(token),
+    )
+    assert response.status_code == 200, response.text
+
+
+async def service_token(client: AsyncClient, token: str, audience: str = SERVICE_NAME) -> str:
+    """Exchange a session for a short-lived token scoped to one service."""
+    response = await client.post(
+        "/v1/auth/service-token", json={"audience": audience}, headers=auth(token)
+    )
+    assert response.status_code == 200, response.text
+    minted: str = response.json()["token"]
+    return minted
+
+
+async def grant_roles(
+    client: AsyncClient, account_id: str, roles: list[str], *, as_token: str = ADMIN_TOKEN
+) -> None:
+    """Set an account's roles, by default via break-glass."""
+    response = await client.put(
+        f"/v1/admin/accounts/{account_id}/roles",
+        json={"roles": roles},
+        headers={"Authorization": f"Bearer {as_token}"},
+    )
+    assert response.status_code == 200, response.text
+
+
+async def account_id_of(client: AsyncClient, token: str) -> str:
+    """Read the calling account's own id."""
+    response = await client.get("/v1/auth/me", headers=auth(token))
+    assert response.status_code == 200, response.text
+    account_id: str = response.json()["account_id"]
+    return account_id
+
+
+async def onboard_with_roles(
+    client: AsyncClient, email: str, roles: list[str], password: str = PASSWORD
+) -> str:
+    """Onboard an account and grant it roles. Returns its session token."""
+    session = await onboard(client, email, password)
+    await grant_roles(client, await account_id_of(client, session), roles)
+    return session
+
+
+def service_call(*, service_token_value: str, user_token: str) -> dict[str, str]:
+    """The two headers an internal call must carry: which service, and for whom."""
+    return {
+        "Authorization": f"Bearer {service_token_value}",
+        USER_TOKEN_HEADER: user_token,
+    }

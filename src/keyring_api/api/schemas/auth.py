@@ -189,8 +189,9 @@ class IssueInviteRequest(BaseModel):
 class InviteResponse(BaseModel):
     """A freshly minted invite.
 
-    ``token`` is shown once. Deliver it to the person over whatever channel you already
-    use with them; the service does not send mail.
+    ``token`` is present **only when this deployment cannot send mail**. With delivery
+    configured the invite goes to the recipient and the token is omitted here, so it
+    exists in exactly one place rather than in an inbox and an HTTP response both.
     """
 
     model_config = ConfigDict(
@@ -198,13 +199,40 @@ class InviteResponse(BaseModel):
             "examples": [
                 {
                     "grant_id": "grant_9f2c...",
-                    "token": "Xf2...",
                     "expires_at": "2026-09-17T12:00:00Z",
+                    "delivered": True,
+                    "token": None,
                 }
             ]
         }
     )
 
     grant_id: str = Field(description="Identifies this invite in the logs.")
-    token: str = Field(description="The invite token. Shown once, never recoverable.")
     expires_at: datetime = Field(description="After this, the invite stops working.")
+    delivered: bool = Field(
+        description="Whether the invite was emailed. When false, deliver `token` yourself."
+    )
+    token: str | None = Field(
+        default=None,
+        description=(
+            "The invite token, present only when this deployment sends no mail. Shown "
+            "once and never recoverable."
+        ),
+    )
+
+
+class ServiceTokenRequest(BaseModel):
+    """Ask for a token scoped to one other service."""
+
+    model_config = ConfigDict(
+        extra="forbid", json_schema_extra={"examples": [{"audience": "media-tool"}]}
+    )
+
+    audience: str = Field(
+        min_length=1,
+        max_length=128,
+        description=(
+            "Which service the token is for. It will be rejected by any other service, "
+            "so a token handed to one cannot be replayed at another."
+        ),
+    )

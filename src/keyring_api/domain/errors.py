@@ -37,6 +37,15 @@ class AccountLockedError(AuthenticationError):
     """
 
 
+class AccountNotFoundError(DomainError):
+    """No account with that id.
+
+    Only ever raised on the administrative surface, where the caller is the operator and
+    there is no stranger to leak the answer to. Nothing a person-facing endpoint does
+    may raise this -- see :class:`AuthenticationError`.
+    """
+
+
 class AccountExistsError(DomainError):
     """An account already exists for this address.
 
@@ -63,6 +72,49 @@ class InvalidGrantError(DomainError):
     One error for all three, for the same reason as :class:`AuthenticationError`: an
     attacker holding a guessed token learns nothing from the difference between "no such
     token" and "that token was already redeemed".
+    """
+
+
+class InvalidRoleError(DomainError, ValueError):
+    """A role name or permission set cannot be stored as given."""
+
+
+class RoleNotFoundError(DomainError):
+    """No role by that name.
+
+    Safe to be specific: role names are administrative and only visible to callers who
+    already hold ``roles:read``.
+    """
+
+
+class RoleExistsError(DomainError):
+    """A role by that name already exists."""
+
+
+class RoleInUseError(DomainError):
+    """A role cannot be deleted while accounts still hold it.
+
+    Refused rather than cascaded. Silently stripping a permission from everybody who had
+    it is the kind of change that is noticed when somebody cannot do their job.
+    """
+
+
+class InsufficientPermissionError(DomainError):
+    """The caller is authenticated but lacks a permission this action needs.
+
+    Distinct from :class:`AuthenticationError`, and rendered as 403 rather than 404 --
+    which is safe *only* because the thing being protected is an administrative
+    capability, not the existence of a resource. Permission is always checked before
+    existence, so a caller who lacks the permission cannot use the difference between
+    403 and 404 to discover whether an account exists.
+    """
+
+
+class LastOwnerError(DomainError):
+    """The last owner cannot be demoted or deleted.
+
+    A deployment with no owner has no way to appoint one; the only way back is the
+    break-glass admin token, which is exactly the situation nobody wants to be in.
     """
 
 

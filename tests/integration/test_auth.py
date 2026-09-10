@@ -42,18 +42,31 @@ class TestInviteIssuance:
         assert response.status_code == 201
         assert response.json()["token"]
 
-    async def test_a_session_token_does_not_authorise_administration(
+    async def test_a_session_without_the_permission_does_not_authorise_administration(
         self, client: AsyncClient
     ) -> None:
-        # Administration is the operator, not an account. A compromised account must not
-        # be able to mint invites for more accounts.
-        session = await onboard(client)
+        # The first account onboarded becomes the owner, so this uses a second one --
+        # which gets `member`, and `member` has no administrative permissions at all.
+        # A compromised ordinary account must not be able to mint accounts.
+        await onboard(client)
+        ordinary = await onboard(client, "ordinary@example.com")
 
         response = await client.post(
-            "/v1/admin/invites", json={"email": "other@example.com"}, headers=auth(session)
+            "/v1/admin/invites", json={"email": "third@example.com"}, headers=auth(ordinary)
         )
 
-        assert response.status_code == 401
+        assert response.status_code == 403
+
+    async def test_a_session_holding_the_permission_does_authorise_it(
+        self, client: AsyncClient
+    ) -> None:
+        owner = await onboard(client)
+
+        response = await client.post(
+            "/v1/admin/invites", json={"email": "other@example.com"}, headers=auth(owner)
+        )
+
+        assert response.status_code == 201
 
     async def test_no_token_is_refused(self, client: AsyncClient) -> None:
         response = await client.post("/v1/admin/invites", json={"email": EMAIL})
@@ -67,12 +80,12 @@ class TestInviteIssuance:
 
         assert response.status_code == 401
 
-    async def test_a_deployment_with_no_admin_token_has_no_admin_endpoint(
+    async def test_a_deployment_with_no_admin_token_refuses_break_glass(
         self, tmp_path: Path
     ) -> None:
-        # Unavailable rather than open. The distinction matters: an admin endpoint that
-        # falls back to "no token required" when none is configured is how a service
-        # ships with an unauthenticated account factory.
+        # Refused, never waved through. An admin route that falls back to "no token
+        # required" when none is configured is how a service ships with an
+        # unauthenticated account factory.
         settings = build_settings(tmp_path, admin_token=None)
 
         async with (
@@ -83,7 +96,7 @@ class TestInviteIssuance:
                 "/v1/admin/invites", json={"email": EMAIL}, headers=auth("anything")
             )
 
-        assert response.status_code == 503
+        assert response.status_code == 401
 
     async def test_inviting_an_address_that_already_has_an_account_conflicts(
         self, client: AsyncClient
@@ -448,7 +461,10 @@ class TestContract:
             for operation in path.values()
         }
         assert operation_ids == {
+            # health and keys
             "get_health",
+            "get_jwks",
+            # authentication
             "login",
             "logout",
             "logout_everywhere",
@@ -457,7 +473,37 @@ class TestContract:
             "change_password",
             "request_password_reset",
             "redeem_password_reset",
+            "issue_service_token",
+            # profiles and connections
+            "list_profiles",
+            "create_profile",
+            "get_profile",
+            "delete_profile",
+            "put_api_key",
+            "put_password",
+            "authorize_connection",
+            "delete_connection",
+            "complete_authorization",
+            # service-to-service
+            "resolve_credential",
+            "resolve_form_secrets",
+            # administration
             "issue_invite",
+            "delete_account",
+            "get_account",
+            "list_accounts",
+            "set_account_roles",
+            "set_account_status",
+            "revoke_account_sessions",
+            "issue_account_password_reset",
+            "list_account_profiles",
+            "delete_account_profile",
+            "list_roles",
+            "create_role",
+            "update_role",
+            "delete_role",
+            "list_permissions",
+            "read_audit_log",
         }
 
     async def test_every_operation_describes_itself(self, client: AsyncClient) -> None:

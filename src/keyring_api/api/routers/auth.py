@@ -15,28 +15,26 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request, Response, status
 
-from keyring_api.api.dependencies import (
-    AdminDep,
-    ContainerDep,
-    CurrentAccountDep,
-    CurrentSessionDep,
-)
+from keyring_api.accounts.signing import TOKEN_TYPE
+from keyring_api.api.dependencies import ContainerDep, CurrentAccountDep, CurrentSessionDep
 from keyring_api.api.schemas.auth import (
     AccountResponse,
     AcknowledgedResponse,
     ChangePasswordRequest,
-    InviteResponse,
-    IssueInviteRequest,
     LoginRequest,
     RedeemInviteRequest,
     RedeemPasswordResetRequest,
     RequestPasswordResetRequest,
     RevokedResponse,
+    ServiceTokenRequest,
     SessionResponse,
 )
 from keyring_api.api.schemas.common import Problem
+from keyring_api.api.schemas.profiles import ServiceTokenResponse
 
 router = APIRouter(prefix="/v1", tags=["auth"])
+
+NO_SUCH_ACCOUNT = "no account with that id"
 
 RESET_ACKNOWLEDGEMENT = "if that address has an account, a reset link has been sent"
 """The single response every reset request gets. Never varied."""
@@ -205,8 +203,9 @@ async def change_password(
     description=(
         "Always responds 200 with the same message, whether or not the address has an "
         "account. That is deliberate and must not be 'fixed': a different response for "
-        "an unknown address would let anyone test which people have accounts here. The "
-        "service does not send mail -- the operator delivers the link. Rate limited."
+        "an unknown address would let anyone test which people have accounts here. When "
+        "mail is configured the link is emailed; otherwise the operator delivers it. "
+        "Rate limited per caller and per recipient address."
     ),
     response_model=AcknowledgedResponse,
     responses={status.HTTP_429_TOO_MANY_REQUESTS: _PROBLEM},
@@ -251,31 +250,25 @@ async def redeem_password_reset(
 
 
 @router.post(
-    "/admin/invites",
-    operation_id="issue_invite",
-    summary="Mint an invite for a new account",
+    "/auth/service-token",
+    operation_id="issue_service_token",
+    summary="Mint a short-lived token for calling another service as yourself",
     description=(
-        "Operator-only: authorise with the deployment's admin token, not a session. "
-        "There is no public registration, so this is the only way an account comes into "
-        "existence. The invite token is returned once -- deliver it to the person "
-        "yourself. Responds 409 if that address already has an account, and 503 if the "
-        "deployment has no admin token configured."
+        "Exchanges your session for a signed token scoped to one other service, which "
+        "that service verifies locally against keyring's public keys -- no call back "
+        "here per request. It expires in minutes: a signed token cannot be revoked, so "
+        "the expiry is the only thing bounding how long a logged-out session keeps "
+        "working elsewhere. Get a new one when it expires rather than caching it."
     ),
-    status_code=status.HTTP_201_CREATED,
-    response_model=InviteResponse,
-    tags=["admin"],
-    responses={
-        status.HTTP_401_UNAUTHORIZED: _PROBLEM,
-        status.HTTP_409_CONFLICT: _PROBLEM,
-        status.HTTP_422_UNPROCESSABLE_CONTENT: _PROBLEM,
-        status.HTTP_503_SERVICE_UNAVAILABLE: _PROBLEM,
-    },
+    response_model=ServiceTokenResponse,
+    responses={status.HTTP_401_UNAUTHORIZED: _PROBLEM},
 )
-async def issue_invite(
-    body: IssueInviteRequest, container: ContainerDep, _admin: AdminDep
-) -> InviteResponse:
-    """Mint a single-use invite."""
-    invite = await container.account_service.issue_invite(email=body.email)
-    return InviteResponse(
-        grant_id=invite.grant_id, token=invite.token, expires_at=invite.expires_at
+async def issue_service_token(
+    body: ServiceTokenRequest, container: ContainerDep, account: CurrentAccountDep
+) -> ServiceTokenResponse:
+    """Mint a short-lived signed token for one audience."""
+    ttl = container.settings.access_token_ttl_seconds
+    token = container.signer.issue(
+        account_id=account.account_id, audience=body.audience, ttl_seconds=ttl
     )
+    return ServiceTokenResponse(token=token, token_type=TOKEN_TYPE, expires_in=ttl)

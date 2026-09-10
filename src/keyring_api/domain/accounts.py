@@ -127,6 +127,17 @@ class Account:
     status: AccountStatus = AccountStatus.ACTIVE
     failed_attempts: int = 0
     locked_until: datetime | None = None
+    roles: tuple[str, ...] = ()
+    """Role names, resolved to permissions on every authenticated request.
+
+    Names rather than resolved permissions, deliberately. Permissions baked into the
+    account would go stale the moment a role was edited, and a revoked permission that
+    keeps working until somebody logs out again is not revoked.
+    """
+
+    def with_roles(self, roles: tuple[str, ...], *, now: datetime) -> Account:
+        """Return this account holding exactly ``roles``."""
+        return replace(self, roles=roles, updated_at=now)
 
     def is_locked(self, *, now: datetime) -> bool:
         """Whether the account is currently within a lockout window."""

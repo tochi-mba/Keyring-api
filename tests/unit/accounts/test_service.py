@@ -31,7 +31,10 @@ from keyring_api.domain.errors import (
     RateLimitedError,
 )
 from keyring_api.domain.grants import Grant, GrantPurpose, new_grant_id
+from keyring_api.notifications.outbox import Outbox
+from keyring_api.notifications.senders import DisabledEmailSender
 from tests.fakes.clock import FakeClock
+from tests.fakes.email import ExplodingSender, RecordingSender
 
 EMAIL = "person@example.com"
 PASSWORD = "correct horse battery staple"
@@ -63,16 +66,38 @@ def service(clock: FakeClock, settings: Settings) -> AccountService:
         grants=InMemoryGrantStore(),
         hasher=Argon2PasswordHasher(settings.argon2),
         limiter=InMemoryRateLimiter(clock=clock),
+        outbox=Outbox(DisabledEmailSender()),
         clock=clock,
         settings=settings,
     )
 
 
-async def onboard(service: AccountService, email: str = EMAIL, password: str = PASSWORD) -> str:
+FOUNDER_EMAIL = "founder@example.com"
+
+
+async def create(service: AccountService, email: str, password: str = PASSWORD) -> str:
     """Invite an address and redeem it. Returns the new account id."""
     invite = await service.issue_invite(email=email)
     account = await service.redeem_invite(token=invite.token, password=password, caller=CALLER)
     return account.account_id
+
+
+async def onboard(service: AccountService, email: str = EMAIL, password: str = PASSWORD) -> str:
+    """Create the account under test, behind a founder account.
+
+    The founder exists because the *first* account a service ever creates becomes the
+    owner, and the last-owner guard refuses to delete or demote the only one. These tests
+    are about sessions, resets and deletion mechanics rather than about ownership, so the
+    account under test is deliberately an ordinary member -- which is also what every
+    account except the first actually is.
+
+    Ownership itself is tested in tests/unit/accounts/test_roles_store.py and
+    tests/integration/test_admin_accounts.py.
+    """
+    if await service._accounts.count() == 0:
+        await create(service, FOUNDER_EMAIL)
+
+    return await create(service, email, password)
 
 
 class TestInvites:
@@ -778,3 +803,227 @@ class TestSweeping:
         assert swept.sessions == 1
         assert swept.grants >= 1
         assert swept.rate_limit_records >= 1
+
+
+class TestEmailDelivery:
+    """Delivery of invite and reset tokens, and the properties it must not break."""
+
+    @pytest.fixture
+    def recorder(self) -> RecordingSender:
+        return RecordingSender()
+
+    @pytest.fixture
+    def mailing_service(
+        self, clock: FakeClock, settings: Settings, recorder: RecordingSender
+    ) -> AccountService:
+        return AccountService(
+            accounts=InMemoryAccountStore(),
+            sessions=InMemorySessionStore(clock=clock),
+            grants=InMemoryGrantStore(),
+            hasher=Argon2PasswordHasher(settings.argon2),
+            limiter=InMemoryRateLimiter(clock=clock),
+            outbox=Outbox(recorder),
+            clock=clock,
+            settings=settings,
+        )
+
+    async def test_an_invite_is_mailed_to_the_address_it_was_issued_for(
+        self, mailing_service: AccountService, recorder: RecordingSender
+    ) -> None:
+        await mailing_service.issue_invite(email=EMAIL)
+        await mailing_service._outbox.drain()
+
+        assert [message.to_address for message in recorder.sent] == [EMAIL]
+
+    async def test_the_mailed_invite_carries_the_token(
+        self, mailing_service: AccountService, recorder: RecordingSender
+    ) -> None:
+        invite = await mailing_service.issue_invite(email=EMAIL)
+        await mailing_service._outbox.drain()
+
+        assert invite.token in recorder.sent[0].body
+
+    async def test_a_reset_is_mailed_to_the_account_holder(
+        self, mailing_service: AccountService, recorder: RecordingSender
+    ) -> None:
+        await onboard(mailing_service)
+        # Drain before clearing: onboarding queues an invite mail, and a message still in
+        # flight would land after the clear and be counted as the reset.
+        await mailing_service._outbox.drain()
+        recorder.sent.clear()
+
+        await mailing_service.request_password_reset(email=EMAIL, caller=CALLER)
+        await mailing_service._outbox.drain()
+
+        assert [message.to_address for message in recorder.sent] == [EMAIL]
+
+    async def test_no_mail_is_sent_for_an_address_with_no_account(
+        self, mailing_service: AccountService, recorder: RecordingSender
+    ) -> None:
+        # Not because it would leak -- the response is identical either way -- but
+        # because mailing a stranger "someone tried to reset your password" for an
+        # account they do not have is how a service becomes a spam vector.
+        await mailing_service.request_password_reset(email="nobody@example.com", caller=CALLER)
+        await mailing_service._outbox.drain()
+
+        assert recorder.sent == []
+
+    async def test_the_service_reports_that_it_delivers_email(
+        self, mailing_service: AccountService, service: AccountService
+    ) -> None:
+        # The API reads this to decide whether to return an invite token in its response.
+        assert mailing_service.delivers_email
+        assert not service.delivers_email
+
+    async def test_one_address_cannot_be_mailed_without_limit(
+        self, mailing_service: AccountService, recorder: RecordingSender, settings: Settings
+    ) -> None:
+        # The per-caller limit stops one attacker. This stops many callers, or one behind
+        # changing addresses, using password reset to flood somebody else's inbox -- an
+        # attack that costs the attacker nothing and lands entirely on a third party.
+        await onboard(mailing_service)
+        await mailing_service._outbox.drain()
+        recorder.sent.clear()
+
+        for index in range(settings.email.max_messages_per_address_per_window + 3):
+            await mailing_service.request_password_reset(email=EMAIL, caller=f"10.0.0.{index}")
+        await mailing_service._outbox.drain()
+
+        assert len(recorder.sent) == settings.email.max_messages_per_address_per_window
+
+    async def test_a_flooded_address_still_gets_the_same_answer(
+        self, mailing_service: AccountService, settings: Settings
+    ) -> None:
+        # Refused silently. Raising, or returning anything different, would tell the
+        # caller the address is real -- exactly what the identical response elsewhere in
+        # this flow exists to hide.
+        await onboard(mailing_service)
+        for index in range(settings.email.max_messages_per_address_per_window + 2):
+            await mailing_service.request_password_reset(email=EMAIL, caller=f"10.0.0.{index}")
+
+        refused = await mailing_service.request_password_reset(email=EMAIL, caller="10.1.1.1")
+        unknown = await mailing_service.request_password_reset(
+            email="nobody@example.com", caller="10.1.1.2"
+        )
+
+        assert refused is None
+        assert unknown is None
+
+    async def test_the_recipient_limit_holds_no_plaintext_addresses(
+        self, mailing_service: AccountService
+    ) -> None:
+        # The limiter is an in-memory map keyed by whatever it is given. Keyed by the
+        # address itself, it would be a list of everyone who has an account here.
+        await onboard(mailing_service)
+        await mailing_service.request_password_reset(email=EMAIL, caller=CALLER)
+
+        limiter = mailing_service._limiter
+        assert isinstance(limiter, InMemoryRateLimiter)
+        assert not any(EMAIL in caller for _, caller in limiter._attempts)
+
+    async def test_a_delivery_failure_does_not_fail_the_request(
+        self, clock: FakeClock, settings: Settings
+    ) -> None:
+        # A broken SMTP configuration must not turn password reset into a 500 -- and must
+        # certainly not make a request for a real address behave differently from one for
+        # an unknown address.
+        failing = AccountService(
+            accounts=InMemoryAccountStore(),
+            sessions=InMemorySessionStore(clock=clock),
+            grants=InMemoryGrantStore(),
+            hasher=Argon2PasswordHasher(settings.argon2),
+            limiter=InMemoryRateLimiter(clock=clock),
+            outbox=Outbox(ExplodingSender()),
+            clock=clock,
+            settings=settings,
+        )
+        await onboard(failing)
+
+        assert await failing.request_password_reset(email=EMAIL, caller=CALLER) is not None
+        await failing._outbox.drain()
+
+
+class TestAdminIssuedReset:
+    """An administrator minting a reset for somebody who cannot get in."""
+
+    @pytest.fixture
+    def recorder(self) -> RecordingSender:
+        return RecordingSender()
+
+    @pytest.fixture
+    def mailing_service(
+        self, clock: FakeClock, settings: Settings, recorder: RecordingSender
+    ) -> AccountService:
+        return AccountService(
+            accounts=InMemoryAccountStore(),
+            sessions=InMemorySessionStore(clock=clock),
+            grants=InMemoryGrantStore(),
+            hasher=Argon2PasswordHasher(settings.argon2),
+            limiter=InMemoryRateLimiter(clock=clock),
+            outbox=Outbox(recorder),
+            clock=clock,
+            settings=settings,
+        )
+
+    async def test_it_mints_a_token_that_actually_resets_the_password(
+        self, service: AccountService
+    ) -> None:
+        account_id = await onboard(service)
+        account = await service._accounts.get(account_id)
+        assert account is not None
+
+        grant = await service.issue_reset_for(account)
+        await service.redeem_password_reset(
+            token=grant.token, new_password="a new passphrase", caller=CALLER
+        )
+
+        assert (await service.login(email=EMAIL, password="a new passphrase", caller=CALLER)).token
+
+    async def test_it_bypasses_the_per_caller_rate_limit(
+        self, service: AccountService, settings: Settings
+    ) -> None:
+        # The per-caller limit exists to stop a stranger probing addresses. The caller
+        # here is already authenticated and already holds a permission that says they may
+        # do this; the audit log is what holds them to it.
+        # Kept below the per-recipient mail cap on purpose -- that one still applies, and
+        # it is the subject of the next test. This asserts only that the *caller* limit
+        # does not.
+        assert (
+            settings.rate_limit.reset_attempts < settings.email.max_messages_per_address_per_window
+        )
+        account_id = await onboard(service)
+        account = await service._accounts.get(account_id)
+        assert account is not None
+        for _ in range(settings.rate_limit.reset_attempts):
+            await service.issue_reset_for(account)
+
+        assert (await service.issue_reset_for(account)).token
+
+    async def test_it_still_respects_the_per_recipient_mail_cap(
+        self, mailing_service: AccountService, settings: Settings
+    ) -> None:
+        # So an administrator cannot be used -- deliberately or by a stuck script -- to
+        # flood somebody's inbox, which is the one thing the per-caller limit would not
+        # have stopped here.
+        account_id = await onboard(mailing_service)
+        account = await mailing_service._accounts.get(account_id)
+        assert account is not None
+        for _ in range(settings.email.max_messages_per_address_per_window):
+            await mailing_service.issue_reset_for(account)
+
+        with pytest.raises(RateLimitedError):
+            await mailing_service.issue_reset_for(account)
+
+    async def test_it_invalidates_any_earlier_link(self, service: AccountService) -> None:
+        # Two live links means the older one is still a password sitting in an inbox.
+        account_id = await onboard(service)
+        account = await service._accounts.get(account_id)
+        assert account is not None
+        first = await service.issue_reset_for(account)
+
+        await service.issue_reset_for(account)
+
+        with pytest.raises(InvalidGrantError):
+            await service.redeem_password_reset(
+                token=first.token, new_password="a new passphrase", caller=CALLER
+            )

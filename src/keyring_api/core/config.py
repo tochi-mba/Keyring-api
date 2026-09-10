@@ -41,6 +41,108 @@ class LogFormat(StrEnum):
     CONSOLE = "console"
 
 
+class EmailBackend(StrEnum):
+    """How invite and reset links reach the person they are for."""
+
+    DISABLED = "disabled"
+    """The default. The operator delivers tokens by hand (ADR-0009)."""
+
+    FILE = "file"
+    """Write messages to a directory. Development, and inspecting what would be sent."""
+
+    SMTP = "smtp"
+    """Send for real. Every provider a small deployment would pick speaks it."""
+
+
+class EmailSettings(BaseSettings):
+    """Where invite and reset links go.
+
+    Disabled by default and safe to leave that way: a credential vault that cannot start
+    without an SMTP server is a credential vault nobody can start.
+
+    There is deliberately no setting that disables TLS certificate verification. The
+    absence is the feature -- it is the one knob that turns a working configuration into
+    a silently intercepted one, and it exists in most mail libraries because somebody
+    once had a self-signed certificate.
+    """
+
+    model_config = SettingsConfigDict(extra="forbid")
+
+    backend: EmailBackend = EmailBackend.DISABLED
+
+    host: str = ""
+    port: PositiveInt = 587
+    """587 with STARTTLS is what every provider here documents; 465 is implicit TLS."""
+
+    username: str = ""
+    password: SecretStr | None = None
+
+    use_starttls: bool = True
+    use_implicit_tls: bool = False
+    """Set for port 465. Mutually exclusive with STARTTLS; validated below."""
+
+    from_address: str = ""
+    from_name: str = "keyring"
+    timeout_seconds: PositiveFloat = 10.0
+
+    outbox_dir: Path = Path("var/outbox")
+    """Where the file backend writes. Contains live links, so it is created 0700/0600."""
+
+    @field_validator("outbox_dir")
+    @classmethod
+    def _resolve_outbox(cls, value: Path) -> Path:
+        return value.expanduser().resolve()
+
+    link_base_url: str = ""
+    """Public base URL of whatever redeems these tokens.
+
+    Left empty, messages carry the bare token for the person to paste. That is the honest
+    default for a service with no web UI: inventing a link to a page that does not exist
+    is worse than asking somebody to copy a string.
+    """
+
+    max_messages_per_address_per_window: PositiveInt = 5
+    window_seconds: PositiveFloat = 3_600.0
+    """Caps how often one address can be mailed, whoever asks.
+
+    The per-caller limit stops one attacker; this stops many callers, or one behind
+    changing addresses, from using password reset to flood somebody else's inbox. Keyed
+    by a hash of the address, so the limiter never holds plaintext addresses in memory.
+    """
+
+    @model_validator(mode="after")
+    def _check_transport(self) -> Self:
+        """Refuse configurations that would authenticate in the clear, or not work.
+
+        Checked at startup rather than at the first send: a deployment that believes it
+        has mail configured and does not should find out while somebody is watching, not
+        when a person's reset link fails to arrive.
+        """
+        if self.backend is not EmailBackend.SMTP:
+            return self
+
+        if not self.host or not self.from_address:
+            msg = "email backend 'smtp' needs both host and from_address"
+            raise ValueError(msg)
+
+        if self.use_starttls and self.use_implicit_tls:
+            msg = "use_starttls and use_implicit_tls are mutually exclusive"
+            raise ValueError(msg)
+
+        if self.password is not None and not (self.use_starttls or self.use_implicit_tls):
+            # SMTP AUTH over a plaintext connection sends the password in base64, which
+            # is not encryption. Anyone on the path gets the mailbox -- and a mailbox
+            # that sends password resets is worth more than most of what it protects.
+            msg = "refusing to send SMTP credentials without TLS: enable STARTTLS or implicit TLS"
+            raise ValueError(msg)
+
+        return self
+
+    def from_header(self) -> str:
+        """The From header value."""
+        return f"{self.from_name} <{self.from_address}>" if self.from_name else self.from_address
+
+
 class Argon2Settings(BaseSettings):
     """Password hashing cost.
 
@@ -162,6 +264,21 @@ class Settings(BaseSettings):
 
     oauth_http_timeout_seconds: PositiveFloat = 10.0
 
+    oauth_providers_path: Path | None = None
+    """Provider configuration. Must be mode 0600 -- it holds client secrets."""
+
+    oauth_redirect_uri: str = "http://127.0.0.1:8001/v1/oauth/callback"
+    """Where providers send the person back. Must match what is registered with each."""
+
+    service_tokens: dict[str, SecretStr] = Field(default_factory=dict)
+    """Other services allowed to ask for credentials, by name.
+
+    A service must present both its own token *and* the end user's, and gets a
+    credential only for that user. Without the pairing, any service that could reach
+    keyring could request anybody's token -- the confused deputy, moved to the service
+    boundary.
+    """
+
     # -- Storage -----------------------------------------------------------------------
     secret_dir: Path = Path("var/secrets")
     """Encrypted credential files. Never inside a directory any endpoint serves from."""
@@ -189,12 +306,13 @@ class Settings(BaseSettings):
     # -- Nested ------------------------------------------------------------------------
     argon2: Argon2Settings = Field(default_factory=Argon2Settings)
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
+    email: EmailSettings = Field(default_factory=EmailSettings)
 
-    @field_validator("secret_dir", "signing_key_path")
+    @field_validator("secret_dir", "signing_key_path", "oauth_providers_path")
     @classmethod
-    def _resolve_path(cls, value: Path) -> Path:
+    def _resolve_path(cls, value: Path | None) -> Path | None:
         """Resolve early so a relative path cannot mean two places after a chdir."""
-        return value.expanduser().resolve()
+        return None if value is None else value.expanduser().resolve()
 
     @field_validator("master_key")
     @classmethod

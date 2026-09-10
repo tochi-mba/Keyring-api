@@ -59,6 +59,16 @@ class ProfileStore(Protocol):
         """How many profiles this account has, for the per-account cap."""
         ...
 
+    async def all_profiles(self) -> list[Profile]:
+        """Every profile, across every account.
+
+        The one method that is not account-scoped, and it exists for exactly one caller:
+        the health check, which reports *counts* of unwell connections and never names
+        an account, a profile, or a service. Anything else that reaches for this is
+        almost certainly a cross-account read wearing a disguise.
+        """
+        ...
+
 
 class InMemoryProfileStore:
     """Profiles in a dictionary keyed by account and name."""
@@ -108,3 +118,7 @@ class InMemoryProfileStore:
     async def count_for_account(self, account_id: str) -> int:
         async with self._lock:
             return sum(1 for owner, _ in self._profiles if owner == account_id)
+
+    async def all_profiles(self) -> list[Profile]:
+        async with self._lock:
+            return list(self._profiles.values())

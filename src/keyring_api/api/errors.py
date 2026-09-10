@@ -27,18 +27,25 @@ from keyring_api.core.context import get_request_id
 from keyring_api.core.logging import get_logger
 from keyring_api.domain.errors import (
     AccountExistsError,
+    AccountNotFoundError,
     AuthenticationError,
     ConnectionNotFoundError,
     CredentialUnavailableError,
+    InsufficientPermissionError,
     InvalidEmailError,
     InvalidGrantError,
     InvalidOAuthStateError,
     InvalidPasswordError,
     InvalidProfileNameError,
+    InvalidRoleError,
+    LastOwnerError,
     LimitExceededError,
     ProfileExistsError,
     ProfileNotFoundError,
     RateLimitedError,
+    RoleExistsError,
+    RoleInUseError,
+    RoleNotFoundError,
 )
 
 if TYPE_CHECKING:
@@ -72,6 +79,17 @@ _DOMAIN_STATUS: dict[type[Exception], int] = {
     InvalidPasswordError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     InvalidProfileNameError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     AccountExistsError: status.HTTP_409_CONFLICT,
+    AccountNotFoundError: status.HTTP_404_NOT_FOUND,
+    # 403 rather than 404, and safe *only* because what is being protected is an
+    # administrative capability rather than the existence of a resource. Every admin
+    # route checks its permission before looking the target up, so a caller who lacks
+    # the permission gets the same 403 whether or not the target exists.
+    InsufficientPermissionError: status.HTTP_403_FORBIDDEN,
+    InvalidRoleError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    RoleNotFoundError: status.HTTP_404_NOT_FOUND,
+    RoleExistsError: status.HTTP_409_CONFLICT,
+    RoleInUseError: status.HTTP_409_CONFLICT,
+    LastOwnerError: status.HTTP_409_CONFLICT,
     ProfileExistsError: status.HTTP_409_CONFLICT,
     # Not 403. A 403 would confirm the resource exists and belongs to somebody else,
     # which is precisely the fact that must not leak across accounts.

@@ -18,7 +18,14 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from keyring_api.domain.errors import AccountExistsError
+from keyring_api.domain.errors import (
+    AccountExistsError,
+    AccountNotFoundError,
+    LastOwnerError,
+)
+from keyring_api.domain.rbac import OWNER
+
+NO_SUCH_ACCOUNT = "no account with that id"
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -59,11 +66,36 @@ class AccountStore(Protocol):
         ...
 
     async def delete(self, account_id: str) -> bool:
-        """Remove an account. Returns whether there was one."""
+        """Remove an account. Returns whether there was one.
+
+        Raises:
+            LastOwnerError: if it holds the last owner role.
+        """
         ...
 
     async def count(self) -> int:
         """How many accounts exist."""
+        ...
+
+    async def list_all(self) -> list[Account]:
+        """Every account, oldest first. For the administrative listing."""
+        ...
+
+    async def count_holding(self, role: str) -> int:
+        """How many accounts hold a role. Used to refuse deleting one still in use."""
+        ...
+
+    async def set_roles(self, account_id: str, roles: tuple[str, ...], *, now: datetime) -> Account:
+        """Replace an account's roles, refusing to remove the last owner.
+
+        The check and the write are one operation on purpose. Performed by a caller
+        instead, two administrators demoting the two remaining owners at the same moment
+        would both read "there are two" and both proceed.
+
+        Raises:
+            AccountNotFoundError: no such account.
+            LastOwnerError: this would leave the deployment with no owner.
+        """
         ...
 
 
@@ -172,9 +204,13 @@ class InMemoryAccountStore:
 
     async def delete(self, account_id: str) -> bool:
         async with self._lock:
-            account = self._by_id.pop(account_id, None)
+            account = self._by_id.get(account_id)
             if account is None:
                 return False
+
+            self._check_owner_survives_locked(account_id, keeping_owner=False)
+
+            del self._by_id[account_id]
             # The address index is a second copy of the same fact. Leaving it behind
             # would make that address permanently un-invitable.
             self._id_by_email.pop(account.email, None)
@@ -183,6 +219,49 @@ class InMemoryAccountStore:
     async def count(self) -> int:
         async with self._lock:
             return len(self._by_id)
+
+    async def list_all(self) -> list[Account]:
+        async with self._lock:
+            accounts = list(self._by_id.values())
+        return sorted(accounts, key=lambda account: account.created_at)
+
+    async def count_holding(self, role: str) -> int:
+        async with self._lock:
+            return sum(1 for account in self._by_id.values() if role in account.roles)
+
+    async def set_roles(self, account_id: str, roles: tuple[str, ...], *, now: datetime) -> Account:
+        async with self._lock:
+            account = self._by_id.get(account_id)
+            if account is None:
+                raise AccountNotFoundError(NO_SUCH_ACCOUNT)
+
+            self._check_owner_survives_locked(account_id, keeping_owner=OWNER in roles)
+
+            updated = account.with_roles(roles, now=now)
+            self._by_id[account_id] = updated
+            return updated
+
+    def _check_owner_survives_locked(self, account_id: str, *, keeping_owner: bool) -> None:
+        """Refuse a change that would leave the deployment with no owner.
+
+        Called with the lock held, which is the entire point -- see the module docstring
+        for what happens when this check and its write are separated.
+        """
+        if keeping_owner:
+            return
+
+        remaining = sum(
+            1
+            for other_id, account in self._by_id.items()
+            if OWNER in account.roles and other_id != account_id
+        )
+        if remaining:
+            return
+
+        current = self._by_id.get(account_id)
+        if current is not None and OWNER in current.roles:
+            msg = "this is the last owner; appoint another owner first"
+            raise LastOwnerError(msg)
 
 
 class InMemorySessionStore:

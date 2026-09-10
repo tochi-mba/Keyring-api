@@ -189,10 +189,13 @@ name = "Layers point inward"
 type = "layers"
 layers = [
     "keyring_api.api",
+    "keyring_api.admin",
     "keyring_api.credentials",
     "keyring_api.profiles",
     "keyring_api.accounts",
+    "keyring_api.notifications",
     "keyring_api.secrets",
+    "keyring_api.audit",
     "keyring_api.domain",
 ]
 exhaustive = false
@@ -203,9 +206,12 @@ type = "forbidden"
 source_modules = ["keyring_api.domain"]
 forbidden_modules = [
     "keyring_api.accounts",
+    "keyring_api.admin",
     "keyring_api.api",
+    "keyring_api.audit",
     "keyring_api.core",
     "keyring_api.credentials",
+    "keyring_api.notifications",
     "keyring_api.profiles",
     "keyring_api.secrets",
 ]
@@ -214,8 +220,11 @@ forbidden_modules = [
 name = "Cryptographic primitives stay behind their adapters"
 type = "forbidden"
 source_modules = [
+    "keyring_api.admin",
     "keyring_api.api",
+    "keyring_api.audit",
     "keyring_api.domain",
+    "keyring_api.notifications",
     "keyring_api.profiles",
 ]
 forbidden_modules = ["argon2", "cryptography", "jwt"]

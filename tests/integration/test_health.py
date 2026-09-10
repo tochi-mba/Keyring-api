@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from asgi_lifespan import LifespanManager
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from keyring_api.api.app import create_app
@@ -41,7 +42,7 @@ async def test_it_reports_a_version_and_an_uptime(client: AsyncClient) -> None:
 async def test_it_names_every_dependency_it_checked(client: AsyncClient) -> None:
     body = (await client.get("/healthy")).json()
 
-    assert set(body["checks"]) == {"accounts", "vault"}
+    assert set(body["checks"]) == {"accounts", "vault", "connections"}
 
 
 async def test_it_leaks_no_personal_data(client: AsyncClient) -> None:
@@ -88,3 +89,57 @@ async def test_an_open_vault_reports_ok(settings: Settings) -> None:
 @pytest.mark.parametrize("path", ["/docs", "/openapi.json"])
 async def test_the_api_documents_itself(client: AsyncClient, path: str) -> None:
     assert (await client.get(path)).status_code == 200
+
+
+async def test_it_counts_the_connections_that_exist(client: AsyncClient) -> None:
+    # This is where the check earns its place: an expired grant shows up here, with the
+    # fix, rather than as a job failing mysteriously hours later.
+    from tests.conftest import make_profile, onboard, put_api_key
+
+    session = await onboard(client)
+    await make_profile(client, session)
+    await put_api_key(client, session, profile="personal", service="tmdb")
+
+    body = (await client.get("/healthy")).json()
+
+    assert body["checks"]["connections"]["detail"] == {"total": 1, "unusable": 0}
+    assert body["status"] == "ok"
+
+
+async def test_an_unusable_connection_makes_the_service_degraded(
+    client: AsyncClient, app: FastAPI
+) -> None:
+    from dataclasses import replace
+
+    from keyring_api.domain.profiles import ConnectionStatus
+    from tests.conftest import container_of, make_profile, onboard, put_api_key
+
+    session = await onboard(client)
+    await make_profile(client, session)
+    await put_api_key(client, session, profile="personal", service="tmdb")
+
+    container = container_of(app)
+    profiles = await container.profiles.all_profiles()
+    broken = replace(profiles[0].connections[0], status=ConnectionStatus.EXPIRED)
+    await container.profiles.save(profiles[0].with_connection(broken, now=container.clock.now()))
+
+    response = await client.get("/healthy")
+
+    assert response.status_code == 503
+    assert response.json()["checks"]["connections"]["detail"]["unusable"] == 1
+
+
+async def test_the_connection_count_names_nobody(client: AsyncClient) -> None:
+    # This endpoint is unauthenticated. It may report how many connections are unwell; it
+    # must not report whose, or to what service.
+    from tests.conftest import make_profile, onboard, put_api_key
+
+    session = await onboard(client)
+    await make_profile(client, session)
+    await put_api_key(client, session, profile="personal", service="tmdb")
+
+    body = (await client.get("/healthy")).text
+
+    assert "tmdb" not in body
+    assert "personal" not in body
+    assert "person@example.com" not in body

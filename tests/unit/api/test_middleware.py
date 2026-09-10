@@ -110,9 +110,12 @@ async def test_an_account_deleted_mid_request_is_refused_rather_than_crashing(
     # says the handler assumed something it should not have.
     from tests.conftest import auth, container_of, onboard
 
-    token = await onboard(client)
+    # A second account, because the first one created becomes the owner and the
+    # last-owner guard refuses to delete it -- correctly, and not what this test is about.
+    await onboard(client)
+    token = await onboard(client, "second@example.com")
     container = container_of(app)
-    account = await container.accounts.get_by_email("person@example.com")
+    account = await container.accounts.get_by_email("second@example.com")
     await container.accounts.delete(account.account_id)
 
     response = await client.get("/v1/auth/me", headers=auth(token))

@@ -316,13 +316,6 @@ class AccountService:
 
     async def _open_session(self, account: Account, *, now: datetime) -> LoginResult:
         """Mint a session token and store only its hash."""
-        while await self._sessions.count_for_account(account.account_id) >= (
-            self._settings.max_sessions_per_account
-        ):
-            # An unbounded session list is memory an authenticated caller allocates for
-            # free, one login at a time.
-            await self._sessions.drop_oldest(account.account_id)
-
         token = new_token()
         session = Session(
             session_id=new_session_id(),
@@ -334,7 +327,11 @@ class AccountService:
             absolute_expires_at=now
             + timedelta(seconds=self._settings.session_absolute_ttl_seconds),
         )
-        await self._sessions.add(session)
+        # Stored and trimmed as one operation. This used to be a loop here -- count,
+        # drop the oldest, count again -- and two logins arriving together each saw room
+        # the other was about to take, so the cap was advisory. An unbounded session list
+        # is memory an authenticated caller allocates for free, one login at a time.
+        await self._sessions.add_within_cap(session, cap=self._settings.max_sessions_per_account)
 
         logger.info("login_succeeded", subject_id=account.account_id, session_id=session.session_id)
         return LoginResult(
@@ -522,7 +519,10 @@ class AccountService:
 
         account = None if grant.account_id is None else await self._accounts.get(grant.account_id)
         if account is None:
-            # The account was deleted between the request and the redemption.
+            # Two ways to get here, and the same answer to both. A stored reset grant
+            # that names no account cannot say whose password to set. And redeeming is
+            # not the same operation as loading the account, so an account deleted in
+            # between leaves a consumed token with nothing to apply it to.
             raise InvalidGrantError(BAD_GRANT)
 
         await self._set_password(account, new_password, keep_session_id=None)

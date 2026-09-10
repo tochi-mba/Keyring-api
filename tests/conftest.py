@@ -12,6 +12,7 @@ import pytest
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
+from keyring_api.accounts.sql_roles import seed_builtin_roles
 from keyring_api.api.app import create_app
 from keyring_api.api.routers.internal import USER_TOKEN_HEADER
 from keyring_api.core.config import Argon2Settings, LogFormat, RateLimitSettings, Settings
@@ -70,6 +71,7 @@ async def database(tmp_path: Path) -> AsyncIterator[Database]:
     """
     db = Database(tmp_path / "keyring.db")
     migrate(db, now=EPOCH)
+    seed_builtin_roles(db)
     try:
         yield db
     finally:

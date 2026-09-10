@@ -15,13 +15,13 @@ from typing import TYPE_CHECKING
 
 from keyring_api.accounts.hashing import Argon2PasswordHasher
 from keyring_api.accounts.ratelimit import InMemoryRateLimiter
-from keyring_api.accounts.roles import InMemoryRoleStore
 from keyring_api.accounts.service import AccountService
 from keyring_api.accounts.signing import TokenSigner
-from keyring_api.accounts.store import (
-    InMemoryAccountStore,
-    InMemoryGrantStore,
-    InMemorySessionStore,
+from keyring_api.accounts.sql_roles import SqlRoleStore, seed_builtin_roles
+from keyring_api.accounts.sql_store import (
+    SqlAccountStore,
+    SqlGrantStore,
+    SqlSessionStore,
 )
 from keyring_api.admin.service import Actor, AdminService
 from keyring_api.audit.log import InMemoryAuditLog
@@ -55,14 +55,14 @@ class Container:
     settings: Settings
     clock: Clock
     database: Database
-    accounts: InMemoryAccountStore
-    sessions: InMemorySessionStore
-    grants: InMemoryGrantStore
+    accounts: SqlAccountStore
+    sessions: SqlSessionStore
+    grants: SqlGrantStore
     limiter: InMemoryRateLimiter
     profiles: InMemoryProfileStore
     secrets: SqlSecretStore
     outbox: Outbox
-    roles: InMemoryRoleStore
+    roles: SqlRoleStore
     audit: InMemoryAuditLog
     account_service: AccountService
     credential_service: CredentialService
@@ -78,9 +78,12 @@ class Container:
         clock = clock or SystemClock()
         database = Database(settings.database_path)
         migrate(database, now=clock.now())
-        accounts = InMemoryAccountStore()
-        sessions = InMemorySessionStore(clock=clock)
-        grants = InMemoryGrantStore()
+        # Before any account can hold a role, the roles have to exist -- the account_roles
+        # foreign key says so.
+        seed_builtin_roles(database)
+        accounts = SqlAccountStore(database=database)
+        sessions = SqlSessionStore(database=database, clock=clock)
+        grants = SqlGrantStore(database=database)
         limiter = InMemoryRateLimiter(clock=clock)
         profiles = InMemoryProfileStore()
         secrets = SqlSecretStore(
@@ -88,7 +91,7 @@ class Container:
         )
         tokens = HttpTokenEndpoint(timeout_seconds=settings.oauth_http_timeout_seconds)
         outbox = Outbox(build_sender(settings.email))
-        roles = InMemoryRoleStore()
+        roles = SqlRoleStore(database=database)
         audit = InMemoryAuditLog(clock=clock)
 
         account_service = AccountService(

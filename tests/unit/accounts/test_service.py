@@ -8,17 +8,17 @@ whoever finds it first.
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from keyring_api.accounts.hashing import Argon2PasswordHasher
 from keyring_api.accounts.ratelimit import InMemoryRateLimiter
 from keyring_api.accounts.service import AccountService, LoginResult
-from keyring_api.accounts.store import (
-    InMemoryAccountStore,
-    InMemoryGrantStore,
-    InMemorySessionStore,
+from keyring_api.accounts.sql_store import (
+    SqlAccountStore,
+    SqlGrantStore,
+    SqlSessionStore,
 )
 from keyring_api.accounts.tokens import hash_token, new_token
 from keyring_api.core.config import Argon2Settings, RateLimitSettings, Settings
@@ -32,10 +32,14 @@ from keyring_api.domain.errors import (
     RateLimitedError,
 )
 from keyring_api.domain.grants import Grant, GrantPurpose, new_grant_id
+from keyring_api.notifications.base import EmailSender
 from keyring_api.notifications.outbox import Outbox
 from keyring_api.notifications.senders import DisabledEmailSender
 from tests.fakes.clock import FakeClock
 from tests.fakes.email import ExplodingSender, RecordingSender
+
+if TYPE_CHECKING:
+    from keyring_api.storage.database import Database
 
 EMAIL = "person@example.com"
 PASSWORD = "correct horse battery staple"
@@ -59,18 +63,34 @@ def settings() -> Settings:
     )
 
 
-@pytest.fixture
-def service(clock: FakeClock, settings: Settings) -> AccountService:
+def build_service(
+    *,
+    database: Database,
+    clock: FakeClock,
+    settings: Settings,
+    sender: EmailSender | None = None,
+) -> AccountService:
+    """One service wired onto one database.
+
+    All three stores share the database, which is what a deployment does -- and it means
+    the foreign keys between accounts, sessions and grants are live in these tests rather
+    than something only the integration suite sees.
+    """
     return AccountService(
-        accounts=InMemoryAccountStore(),
-        sessions=InMemorySessionStore(clock=clock),
-        grants=InMemoryGrantStore(),
+        accounts=SqlAccountStore(database=database),
+        sessions=SqlSessionStore(database=database, clock=clock),
+        grants=SqlGrantStore(database=database),
         hasher=Argon2PasswordHasher(settings.argon2),
         limiter=InMemoryRateLimiter(clock=clock),
-        outbox=Outbox(DisabledEmailSender()),
+        outbox=Outbox(sender or DisabledEmailSender()),
         clock=clock,
         settings=settings,
     )
+
+
+@pytest.fixture
+def service(database: Database, clock: FakeClock, settings: Settings) -> AccountService:
+    return build_service(database=database, clock=clock, settings=settings)
 
 
 FOUNDER_EMAIL = "founder@example.com"
@@ -198,6 +218,11 @@ class TestInvites:
         # A stored grant that names no address cannot say what account to create. The
         # only default available would be an address the caller supplied, which is the
         # one thing this flow must never take from the request.
+        #
+        # The grant names an existing account because grants are foreign-keyed to one --
+        # which is the point: even a grant attached to a real account cannot stand in for
+        # the address it does not carry.
+        existing = await create(service, FOUNDER_EMAIL)
         token = new_token()
         now = clock.now()
         await service._grants.add(
@@ -207,7 +232,7 @@ class TestInvites:
                 token_hash=hash_token(token),
                 created_at=now,
                 expires_at=now + timedelta(hours=1),
-                account_id="acct_1",
+                account_id=existing,
             )
         )
 
@@ -774,6 +799,31 @@ class TestDeletion:
                 token=reset.token, new_password="a new passphrase", caller=CALLER
             )
 
+    async def test_a_reset_grant_that_names_no_account_is_refused(
+        self, service: AccountService, clock: FakeClock
+    ) -> None:
+        # The mirror of the invite case: a stored reset that names no account cannot say
+        # whose password to set, and the only default available would be one taken from
+        # the request. Refused with the same error a stranger's guess gets.
+        await onboard(service)
+        token = new_token()
+        now = clock.now()
+        await service._grants.add(
+            Grant(
+                grant_id=new_grant_id(),
+                purpose=GrantPurpose.PASSWORD_RESET,
+                token_hash=hash_token(token),
+                created_at=now,
+                expires_at=now + timedelta(hours=1),
+                email=EMAIL,
+            )
+        )
+
+        with pytest.raises(InvalidGrantError):
+            await service.redeem_password_reset(
+                token=token, new_password="a new passphrase", caller=CALLER
+            )
+
     async def test_the_address_can_be_invited_again_afterwards(
         self, service: AccountService
     ) -> None:
@@ -815,18 +865,13 @@ class TestEmailDelivery:
 
     @pytest.fixture
     def mailing_service(
-        self, clock: FakeClock, settings: Settings, recorder: RecordingSender
+        self,
+        database: Database,
+        clock: FakeClock,
+        settings: Settings,
+        recorder: RecordingSender,
     ) -> AccountService:
-        return AccountService(
-            accounts=InMemoryAccountStore(),
-            sessions=InMemorySessionStore(clock=clock),
-            grants=InMemoryGrantStore(),
-            hasher=Argon2PasswordHasher(settings.argon2),
-            limiter=InMemoryRateLimiter(clock=clock),
-            outbox=Outbox(recorder),
-            clock=clock,
-            settings=settings,
-        )
+        return build_service(database=database, clock=clock, settings=settings, sender=recorder)
 
     async def test_an_invite_is_mailed_to_the_address_it_was_issued_for(
         self, mailing_service: AccountService, recorder: RecordingSender
@@ -923,20 +968,13 @@ class TestEmailDelivery:
         assert not any(EMAIL in caller for _, caller in limiter._attempts)
 
     async def test_a_delivery_failure_does_not_fail_the_request(
-        self, clock: FakeClock, settings: Settings
+        self, database: Database, clock: FakeClock, settings: Settings
     ) -> None:
         # A broken SMTP configuration must not turn password reset into a 500 -- and must
         # certainly not make a request for a real address behave differently from one for
         # an unknown address.
-        failing = AccountService(
-            accounts=InMemoryAccountStore(),
-            sessions=InMemorySessionStore(clock=clock),
-            grants=InMemoryGrantStore(),
-            hasher=Argon2PasswordHasher(settings.argon2),
-            limiter=InMemoryRateLimiter(clock=clock),
-            outbox=Outbox(ExplodingSender()),
-            clock=clock,
-            settings=settings,
+        failing = build_service(
+            database=database, clock=clock, settings=settings, sender=ExplodingSender()
         )
         await onboard(failing)
 
@@ -953,18 +991,13 @@ class TestAdminIssuedReset:
 
     @pytest.fixture
     def mailing_service(
-        self, clock: FakeClock, settings: Settings, recorder: RecordingSender
+        self,
+        database: Database,
+        clock: FakeClock,
+        settings: Settings,
+        recorder: RecordingSender,
     ) -> AccountService:
-        return AccountService(
-            accounts=InMemoryAccountStore(),
-            sessions=InMemorySessionStore(clock=clock),
-            grants=InMemoryGrantStore(),
-            hasher=Argon2PasswordHasher(settings.argon2),
-            limiter=InMemoryRateLimiter(clock=clock),
-            outbox=Outbox(recorder),
-            clock=clock,
-            settings=settings,
-        )
+        return build_service(database=database, clock=clock, settings=settings, sender=recorder)
 
     async def test_it_mints_a_token_that_actually_resets_the_password(
         self, service: AccountService

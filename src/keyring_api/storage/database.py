@@ -177,6 +177,17 @@ class Database:
         )
         return row
 
+    async def count(self, sql: str, parameters: Sequence[object] = ()) -> int:
+        """Run a ``SELECT count(*) AS total`` and return the number.
+
+        Indexes into the result rather than testing for a missing row. An aggregate with
+        no GROUP BY always returns exactly one row, so a "what if it did not" branch
+        would be unreachable code -- which the coverage gate could then never cover, and
+        which somebody would eventually satisfy by weakening the gate.
+        """
+        rows = await self.fetch_all(sql, parameters)
+        return int(rows[0]["total"])
+
     async def execute(self, sql: str, parameters: Sequence[object] = ()) -> int:
         """Run one write statement in its own transaction. Returns rows affected."""
         return await self.transact(lambda connection: connection.execute(sql, parameters).rowcount)

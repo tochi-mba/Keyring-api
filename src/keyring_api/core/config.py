@@ -134,6 +134,17 @@ class Settings(BaseSettings):
 
     max_sessions_per_account: PositiveInt = 20
 
+    lockout_threshold: PositiveInt = 10
+    """Failed logins against one account before it is locked."""
+
+    lockout_seconds: PositiveFloat = 900.0
+    """How long a lockout lasts.
+
+    Fixed rather than escalating. The lock exists to make online guessing impractical,
+    and an escalating one hands an attacker a way to keep a real person locked out
+    indefinitely by failing on their behalf.
+    """
+
     # -- Service tokens ----------------------------------------------------------------
     access_token_ttl_seconds: PositiveInt = 900
     """Short-lived signed tokens other services verify locally against the JWKS.

@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Runtime state (encrypted secrets, signing keys)
+var/
+
+# Local environment -- a master key must never be committed
+.env
+.env.local
+*.pem
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

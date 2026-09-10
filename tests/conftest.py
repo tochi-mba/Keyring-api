@@ -15,6 +15,9 @@ from httpx import ASGITransport, AsyncClient
 from keyring_api.api.app import create_app
 from keyring_api.api.routers.internal import USER_TOKEN_HEADER
 from keyring_api.core.config import Argon2Settings, LogFormat, RateLimitSettings, Settings
+from keyring_api.storage.database import Database
+from keyring_api.storage.migrator import migrate
+from tests.fakes.clock import EPOCH
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -55,6 +58,22 @@ def build_settings(tmp_path: Path, **overrides: Any) -> Settings:
         ),
     }
     return Settings(**{**defaults, **overrides})
+
+
+@pytest.fixture
+async def database(tmp_path: Path) -> AsyncIterator[Database]:
+    """A migrated database on a real file.
+
+    A real file rather than ``:memory:`` on purpose: durability is the property this
+    storage exists for, so the tests exercise the journal mode a deployment actually
+    runs on.
+    """
+    db = Database(tmp_path / "keyring.db")
+    await migrate(db, now=EPOCH)
+    try:
+        yield db
+    finally:
+        await db.aclose()
 
 
 @pytest.fixture

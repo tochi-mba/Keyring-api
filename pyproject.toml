@@ -199,6 +199,7 @@ layers = [
     "keyring_api.notifications",
     "keyring_api.secrets",
     "keyring_api.audit",
+    "keyring_api.storage",
     "keyring_api.domain",
 ]
 exhaustive = false
@@ -217,7 +218,15 @@ forbidden_modules = [
     "keyring_api.notifications",
     "keyring_api.profiles",
     "keyring_api.secrets",
+    "keyring_api.storage",
 ]
+
+[[tool.importlinter.contracts]]
+name = "SQL stays behind the stores"
+type = "forbidden"
+source_modules = ["keyring_api.api", "keyring_api.admin", "keyring_api.domain"]
+forbidden_modules = ["keyring_api.storage", "sqlite3"]
+allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 name = "Cryptographic primitives stay behind their adapters"

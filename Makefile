@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 UV ?= uv
 
-.PHONY: help install fmt lint type imports test cov check run docker clean
+.PHONY: help install fmt lint type imports test cov check run docker clean schema
 
 help: ## Show available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -31,6 +31,9 @@ cov: ## Write an HTML coverage report to htmlcov/
 	$(UV) run pytest --cov --cov-report=html
 
 check: lint type imports test ## Everything CI runs
+
+schema: ## Regenerate the checked-in schema snapshot after changing a migration
+	$(UV) run python scripts/dump_schema.py
 
 smoke: ## End-to-end check against a keyring already running on :8099
 	$(UV) run python scripts/smoke.py

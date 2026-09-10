@@ -114,6 +114,7 @@ ignore = [
     "S101",    # asserts are the point
     "S105",    # test fixtures contain literal token-shaped strings on purpose
     "S106",
+    "S107",
     "SLF001",  # tests may inspect private state
     "PLR2004", # magic numbers are fine in assertions
     "PLR0913", # helpers mirroring a wide API legitimately take many arguments

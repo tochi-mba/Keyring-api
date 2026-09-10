@@ -343,7 +343,13 @@ class TestWriteFailures:
         # base64 text must be a clean refusal, not a TypeError escaping the store.
         path = store.path_for(ACCOUNT, "personal", "spotify")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"wrapped_key": 1, "key_nonce": 2, "nonce": 3, "ciphertext": 4}))
+        path.write_text(
+            json.dumps(
+                # version included, so the refusal comes from the fields being the wrong
+                # type rather than from one being absent -- which is a different path.
+                {"version": 1, "wrapped_key": 1, "key_nonce": 2, "nonce": 3, "ciphertext": 4}
+            )
+        )
 
         with pytest.raises(CredentialUnavailableError):
             await store.get(ACCOUNT, "personal", "spotify")

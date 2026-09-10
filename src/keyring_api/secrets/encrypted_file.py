@@ -4,14 +4,9 @@ Layout::
 
     <root>/<account_id>/<profile>/<service>.json
 
-Each file is an envelope: a per-secret data key, itself encrypted ("wrapped") by the
-master key from the environment, alongside the ciphertext that data key protects. Both
-layers are AES-256-GCM.
-
-**Why envelope encryption rather than encrypting straight with the master key.** The
-master key is then used for 32 bytes per secret instead of for every credential in the
-vault, which bounds how much material a single key protects; and re-keying later means
-rewrapping a few data keys rather than decrypting and re-encrypting every credential.
+Each file holds one :class:`~keyring_api.secrets.envelope.Envelope`, base64'd into JSON.
+The cryptography itself lives in that module; what is here is the part about *files* --
+where they go, who may read them, and how a write survives a crash halfway through.
 
 **Why the file mode matters as much as the cipher.** Encryption defends against a stolen
 disk or a mishandled backup. Mode 0600 defends against every other process and user on
@@ -34,27 +29,24 @@ import re
 import tempfile
 from typing import TYPE_CHECKING
 
-from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from keyring_api.domain.errors import CredentialUnavailableError, VaultSealedError
+from keyring_api.domain.errors import CredentialUnavailableError
+from keyring_api.secrets.envelope import (
+    UNREADABLE,
+    Envelope,
+    open_envelope,
+    require_master,
+    seal,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from keyring_api.secrets.base import Secret
 
-DATA_KEY_BYTES = 32
-NONCE_BYTES = 12
-"""96 bits, the size AES-GCM is specified for. A fresh one per encryption, never reused."""
-
 SECRET_FILE_MODE = 0o600
 SECRET_DIR_MODE = 0o700
-
-ENVELOPE_VERSION = 1
-"""Recorded in every file so a future format change can be recognised rather than guessed."""
-
-SEALED_MESSAGE = "the credential vault is sealed: set KEYRING_MASTER_KEY"
 
 _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._@+-]{1,128}$")
 """What may become a path segment.
@@ -104,7 +96,7 @@ class EncryptedFileSecretStore:
         )
 
     async def get(self, account_id: str, profile: str, service: str) -> Secret | None:
-        master = self._require_key()
+        master = require_master(self._master)
         path = self.path_for(account_id, profile, service)
 
         async with self._lock:
@@ -112,12 +104,12 @@ class EncryptedFileSecretStore:
                 return None
             raw = path.read_text()
 
-        return _open_envelope(raw, master=master)
+        return open_envelope(_decode(raw), master=master)
 
     async def put(self, account_id: str, profile: str, service: str, secret: Secret) -> None:
-        master = self._require_key()
+        master = require_master(self._master)
         path = self.path_for(account_id, profile, service)
-        envelope = _seal_envelope(secret, master=master)
+        envelope = _encode(seal(secret, master=master))
 
         async with self._lock:
             _make_private_dirs(path.parent, root=self._root)
@@ -147,67 +139,38 @@ class EncryptedFileSecretStore:
         async with self._lock:
             return _remove_tree(directory)
 
-    def _require_key(self) -> AESGCM:
-        """Return the master cipher, or refuse to do anything without one.
 
-        Refusing is the only acceptable answer. Writing plaintext as a fallback would
-        put credentials on disk unencrypted; discarding the write silently would lose a
-        credential the caller believes was stored.
-        """
-        if self._master is None:
-            raise VaultSealedError(SEALED_MESSAGE)
-        return self._master
-
-
-def _seal_envelope(secret: Secret, *, master: AESGCM) -> str:
-    """Encrypt a secret under a fresh data key, wrapped by the master key."""
-    data_key = os.urandom(DATA_KEY_BYTES)
-    key_nonce = os.urandom(NONCE_BYTES)
-    payload_nonce = os.urandom(NONCE_BYTES)
-
-    ciphertext = AESGCM(data_key).encrypt(payload_nonce, json.dumps(secret).encode(), None)
-    wrapped = master.encrypt(key_nonce, data_key, None)
-
+def _encode(envelope: Envelope) -> str:
+    """Render an envelope as the JSON that goes on disk."""
     return json.dumps(
         {
-            "version": ENVELOPE_VERSION,
-            "wrapped_key": _b64(wrapped),
-            "key_nonce": _b64(key_nonce),
-            "nonce": _b64(payload_nonce),
-            "ciphertext": _b64(ciphertext),
+            "version": envelope.version,
+            "wrapped_key": _b64(envelope.wrapped_key),
+            "key_nonce": _b64(envelope.key_nonce),
+            "nonce": _b64(envelope.nonce),
+            "ciphertext": _b64(envelope.ciphertext),
         }
     )
 
 
-def _open_envelope(raw: str, *, master: AESGCM) -> Secret:
-    """Unwrap the data key and decrypt the payload.
+def _decode(raw: str) -> Envelope:
+    """Parse the JSON on disk back into an envelope.
 
-    Every failure -- malformed JSON, a missing field, a wrong key, a tampered
-    ciphertext -- becomes one error. AES-GCM authenticates, so a wrong key is a clean
-    failure rather than plausible-looking nonsense; that matters, because a store that
-    silently returned corrupted material would surface days later as a mysterious
-    rejection at the third-party service.
+    A malformed file becomes the same error a wrong key does. A caller cannot act on the
+    difference, and distinguishing them would say which of the two happened to somebody
+    who supplied neither.
     """
     try:
-        envelope = json.loads(raw)
-        data_key = master.decrypt(
-            _unb64(envelope["key_nonce"]), _unb64(envelope["wrapped_key"]), None
+        parsed = json.loads(raw)
+        return Envelope(
+            version=int(parsed["version"]),
+            wrapped_key=_unb64(parsed["wrapped_key"]),
+            key_nonce=_unb64(parsed["key_nonce"]),
+            nonce=_unb64(parsed["nonce"]),
+            ciphertext=_unb64(parsed["ciphertext"]),
         )
-        plaintext = AESGCM(data_key).decrypt(
-            _unb64(envelope["nonce"]), _unb64(envelope["ciphertext"]), None
-        )
-        decoded: Secret = json.loads(plaintext)
-    except (
-        InvalidTag,
-        KeyError,
-        TypeError,
-        ValueError,
-        binascii.Error,
-    ) as exc:
-        msg = "stored credential material could not be read"
-        raise CredentialUnavailableError(msg) from exc
-
-    return decoded
+    except (KeyError, TypeError, ValueError, binascii.Error) as exc:
+        raise CredentialUnavailableError(UNREADABLE) from exc
 
 
 def _make_private_dirs(directory: Path, *, root: Path) -> None:

@@ -58,6 +58,22 @@ class Argon2Settings(BaseSettings):
     hash_length: PositiveInt = 32
     salt_length: PositiveInt = 16
 
+    @model_validator(mode="after")
+    def _check_memory_covers_parallelism(self) -> Self:
+        """Argon2 requires at least 8 KiB of memory per lane.
+
+        Checked here so raising parallelism without raising memory fails at startup with
+        a message naming the fix, rather than at the first login attempt with
+        "Memory cost is too small" from inside the hashing library.
+        """
+        minimum = 8 * self.parallelism
+        if self.memory_cost_kib < minimum:
+            msg = (
+                f"memory_cost_kib must be at least 8 KiB per lane ({minimum} for this parallelism)"
+            )
+            raise ValueError(msg)
+        return self
+
 
 class RateLimitSettings(BaseSettings):
     """How many attempts an unauthenticated caller gets before being told to wait.

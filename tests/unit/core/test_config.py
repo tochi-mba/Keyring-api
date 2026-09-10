@@ -137,3 +137,15 @@ class TestValidation:
         # media-tool verifies keyring's tokens by issuer; a bare hostname would not be
         # comparable across the two.
         assert re.match(r"^https?://", build().issuer)
+
+
+class TestArgon2Parameters:
+    def test_memory_must_cover_every_lane(self) -> None:
+        # Argon2 needs 8 KiB per lane. Raising parallelism without raising memory
+        # otherwise fails at the first login with a message from inside the hashing
+        # library rather than at startup with one naming the fix.
+        with pytest.raises(ValidationError, match="per lane"):
+            build(argon2={"memory_cost_kib": 16, "parallelism": 4})
+
+    def test_the_defaults_satisfy_their_own_constraint(self) -> None:
+        assert build().argon2.memory_cost_kib >= 8 * build().argon2.parallelism

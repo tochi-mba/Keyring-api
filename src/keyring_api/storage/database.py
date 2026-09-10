@@ -135,6 +135,15 @@ class Database:
         logger.info("database_opened", journal_mode=journal_mode)
         return connection
 
+    def run_sync(self, work: Callable[[sqlite3.Connection], T]) -> T:
+        """Run ``work`` on the worker thread, blocking the caller until it finishes.
+
+        For startup only -- opening the database and migrating it happen before there is
+        an event loop to keep responsive, and the composition root is synchronous. Inside
+        a request this would block the loop, which is what :meth:`run` is for.
+        """
+        return self._executor.submit(work, self._connection).result()
+
     async def run(self, work: Callable[[sqlite3.Connection], T]) -> T:
         """Run ``work`` on the worker thread, outside any transaction.
 

@@ -22,6 +22,7 @@ from tests.conftest import (
     make_profile,
     onboard,
     put_api_key,
+    stored_secret_count,
 )
 
 if TYPE_CHECKING:
@@ -29,7 +30,6 @@ if TYPE_CHECKING:
 
     from fastapi import FastAPI
 
-    from keyring_api.core.config import Settings
 
 OTHER_EMAIL = "other@example.com"
 EMAIL_TO_DELETE = "doomed@example.com"
@@ -147,22 +147,21 @@ class TestCascade:
 
         assert await container_of(app).profiles.list_for_account(account_id) == []
 
-    async def test_its_encrypted_credential_files_are_gone_from_disk(
-        self, client: AsyncClient, settings: Settings
+    async def test_its_encrypted_credential_material_is_gone(
+        self, client: AsyncClient, app: FastAPI
     ) -> None:
-        # The one that matters most. A profile record is a row; a leftover secret file is
-        # decryptable credential material sitting on disk that nothing will collect.
+        # The one that matters most. A profile record is a row; leftover credential
+        # material is decryptable and nothing will ever collect it.
         await onboard(client)
         session = await onboard(client, EMAIL_TO_DELETE)
         await make_profile(client, session)
         await put_api_key(client, session, profile="personal", service="tmdb")
         account_id = await account_id_of(client, session)
-        stored = settings.secret_dir / account_id
-        assert stored.exists()
+        assert await stored_secret_count(app, account_id) == 1
 
         await delete(client, account_id)
 
-        assert not stored.exists()
+        assert await stored_secret_count(app, account_id) == 0
 
     async def test_the_address_can_be_invited_again(self, client: AsyncClient) -> None:
         # The address index is a second copy of the same fact. Leaving it behind would
@@ -198,8 +197,8 @@ class TestCascadeIsNotOverBroad:
         response = await client.get("/v1/profiles/personal", headers=auth(survivor))
         assert response.status_code == 200
 
-    async def test_another_account_keeps_its_credential_files(
-        self, client: AsyncClient, settings: Settings
+    async def test_another_account_keeps_its_credential_material(
+        self, client: AsyncClient, app: FastAPI
     ) -> None:
         survivor = await onboard(client)
         doomed = await onboard(client, EMAIL_TO_DELETE)
@@ -209,4 +208,4 @@ class TestCascadeIsNotOverBroad:
 
         await delete(client, await account_id_of(client, doomed))
 
-        assert (settings.secret_dir / survivor_id).exists()
+        assert await stored_secret_count(app, survivor_id) == 1

@@ -68,21 +68,27 @@ def discover(directory: Path = MIGRATIONS_DIR) -> list[Migration]:
     return sorted(migrations, key=lambda migration: migration.version)
 
 
-async def migrate(database: Database, *, now: datetime, directory: Path = MIGRATIONS_DIR) -> int:
+def migrate(database: Database, *, now: datetime, directory: Path = MIGRATIONS_DIR) -> int:
     """Bring the schema up to date. Returns how many migrations were applied.
+
+    Synchronous because it only ever runs at startup, from the composition root, before
+    there is an event loop whose responsiveness could matter.
 
     Idempotent: running it against an up-to-date database applies nothing and returns
     zero, which is what makes it safe to call on every start.
     """
-    await database.transact(lambda connection: connection.execute(SCHEMA_VERSION_DDL))
+    database.run_sync(lambda connection: connection.execute(SCHEMA_VERSION_DDL))
 
     applied = {
-        row["version"] for row in await database.fetch_all("SELECT version FROM schema_version")
+        row["version"]
+        for row in database.run_sync(
+            lambda connection: connection.execute("SELECT version FROM schema_version").fetchall()
+        )
     }
     pending = [migration for migration in discover(directory) if migration.version not in applied]
 
     for migration in pending:
-        await database.run(
+        database.run_sync(
             partial(_apply, migration=migration, script=migration.path.read_text(), now=now)
         )
         logger.info("migration_applied", version=migration.version, name=migration.name)

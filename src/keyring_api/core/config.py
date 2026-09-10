@@ -280,8 +280,13 @@ class Settings(BaseSettings):
     """
 
     # -- Storage -----------------------------------------------------------------------
-    secret_dir: Path = Path("var/secrets")
-    """Encrypted credential files. Never inside a directory any endpoint serves from."""
+    database_path: Path = Path("var/keyring.db")
+    """The one file everything lives in, including the encrypted credential material.
+
+    Never inside a directory any endpoint serves from. Back it up with ``VACUUM INTO``
+    rather than ``cp`` -- see docs/operations.md for why copying a live WAL database is
+    not a backup.
+    """
 
     admin_token: SecretStr | None = None
     """Authorises the administrative endpoints -- issuing invites, disabling accounts.
@@ -308,7 +313,7 @@ class Settings(BaseSettings):
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
     email: EmailSettings = Field(default_factory=EmailSettings)
 
-    @field_validator("secret_dir", "signing_key_path", "oauth_providers_path")
+    @field_validator("database_path", "signing_key_path", "oauth_providers_path")
     @classmethod
     def _resolve_path(cls, value: Path | None) -> Path | None:
         """Resolve early so a relative path cannot mean two places after a chdir."""

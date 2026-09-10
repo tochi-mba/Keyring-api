@@ -27,14 +27,13 @@ from keyring_api.domain.errors import (
 )
 from keyring_api.domain.profiles import ConnectionStatus, CredentialKind
 from keyring_api.profiles.store import InMemoryProfileStore
-from keyring_api.secrets.encrypted_file import EncryptedFileSecretStore
+from keyring_api.secrets.sql import SqlSecretStore
 from tests.fakes.clock import FakeClock
 from tests.fakes.oauth import FakeTokenEndpoint
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from keyring_api.core.config import Settings
+    from keyring_api.storage.database import Database
 
 ACCOUNT = "acct_1"
 OTHER = "acct_2"
@@ -64,12 +63,12 @@ def endpoint() -> FakeTokenEndpoint:
 
 @pytest.fixture
 def service(
-    clock: FakeClock, endpoint: FakeTokenEndpoint, settings: Settings, tmp_path: Path
+    clock: FakeClock, endpoint: FakeTokenEndpoint, settings: Settings, database: Database
 ) -> CredentialService:
     return CredentialService(
         profiles=InMemoryProfileStore(),
-        secrets=EncryptedFileSecretStore(
-            root=tmp_path / "secrets", master_key=settings.master_key_bytes()
+        secrets=SqlSecretStore(
+            database=database, master_key=settings.master_key_bytes(), clock=clock
         ),
         states=InMemoryOAuthStateStore(clock=clock),
         tokens=endpoint,

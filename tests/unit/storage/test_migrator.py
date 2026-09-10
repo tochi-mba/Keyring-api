@@ -56,13 +56,13 @@ class TestDiscovery:
 
 class TestApplying:
     async def test_it_builds_the_schema(self, blank: Database) -> None:
-        applied = await migrate(blank, now=EPOCH)
+        applied = migrate(blank, now=EPOCH)
 
         assert applied == 1
         assert "accounts" in await table_names(blank)
 
     async def test_it_records_what_it_applied(self, blank: Database) -> None:
-        await migrate(blank, now=EPOCH)
+        migrate(blank, now=EPOCH)
 
         row = await blank.fetch_one("SELECT version, applied_at FROM schema_version")
 
@@ -71,15 +71,15 @@ class TestApplying:
         assert from_column(row["applied_at"]) == EPOCH
 
     async def test_running_it_again_applies_nothing(self, blank: Database) -> None:
-        await migrate(blank, now=EPOCH)
+        migrate(blank, now=EPOCH)
 
-        assert await migrate(blank, now=EPOCH) == 0
+        assert migrate(blank, now=EPOCH) == 0
 
     async def test_running_it_again_changes_nothing(self, blank: Database) -> None:
-        await migrate(blank, now=EPOCH)
+        migrate(blank, now=EPOCH)
         before = await table_names(blank)
 
-        await migrate(blank, now=EPOCH)
+        migrate(blank, now=EPOCH)
 
         assert await table_names(blank) == before
 
@@ -87,11 +87,11 @@ class TestApplying:
         directory = tmp_path / "steps"
         directory.mkdir()
         (directory / "0001_one.sql").write_text("CREATE TABLE one (x TEXT NOT NULL) STRICT;")
-        await migrate(blank, now=EPOCH, directory=directory)
+        migrate(blank, now=EPOCH, directory=directory)
 
         (directory / "0002_two.sql").write_text("CREATE TABLE two (x TEXT NOT NULL) STRICT;")
 
-        assert await migrate(blank, now=EPOCH, directory=directory) == 1
+        assert migrate(blank, now=EPOCH, directory=directory) == 1
         assert {"one", "two"} <= await table_names(blank)
 
 
@@ -111,7 +111,7 @@ class TestAtomicity:
         )
 
         with pytest.raises(Exception, match="syntax error"):
-            await migrate(blank, now=EPOCH, directory=directory)
+            migrate(blank, now=EPOCH, directory=directory)
 
         assert "good" not in await table_names(blank)
         assert await blank.fetch_all("SELECT version FROM schema_version") == []
@@ -138,7 +138,7 @@ class TestAtomicity:
         )
 
         with pytest.raises(Exception, match="UNIQUE constraint"):
-            await migrate(blank, now=EPOCH, directory=directory)
+            migrate(blank, now=EPOCH, directory=directory)
 
         assert "good" not in await table_names(blank)
 
@@ -151,9 +151,9 @@ class TestAtomicity:
         (directory / "0001_half.sql").write_text("CREATE TABLE bad (;")
 
         with pytest.raises(Exception, match="syntax error"):
-            await migrate(blank, now=EPOCH, directory=directory)
+            migrate(blank, now=EPOCH, directory=directory)
 
-        assert await migrate(blank, now=EPOCH) == 1
+        assert migrate(blank, now=EPOCH) == 1
 
 
 class TestSchemaSnapshot:

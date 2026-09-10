@@ -27,16 +27,16 @@ RUN uv sync --no-dev
 # not live in the image layers. 0700 because a world-readable directory leaks which
 # services each person has connected even when every file inside is unreadable.
 RUN useradd --create-home --uid 10001 keyring \
-    && mkdir -p /var/lib/keyring/secrets /var/lib/keyring/keys \
+    && mkdir -p /var/lib/keyring/keys \
     && chown -R keyring:keyring /var/lib/keyring /app \
-    && chmod 700 /var/lib/keyring/secrets /var/lib/keyring/keys
+    && chmod 700 /var/lib/keyring /var/lib/keyring/keys
 VOLUME ["/var/lib/keyring"]
 
 USER keyring
 
 ENV KEYRING_HOST=0.0.0.0 \
     KEYRING_PORT=8001 \
-    KEYRING_SECRET_DIR=/var/lib/keyring/secrets \
+    KEYRING_DATABASE_PATH=/var/lib/keyring/keyring.db \
     KEYRING_SIGNING_KEY_PATH=/var/lib/keyring/keys/signing.pem \
     KEYRING_LOG_FORMAT=json
 

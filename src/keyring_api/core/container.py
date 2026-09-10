@@ -34,7 +34,9 @@ from keyring_api.credentials.state import InMemoryOAuthStateStore
 from keyring_api.notifications.outbox import Outbox
 from keyring_api.notifications.senders import build_sender
 from keyring_api.profiles.store import InMemoryProfileStore
-from keyring_api.secrets.encrypted_file import EncryptedFileSecretStore
+from keyring_api.secrets.sql import SqlSecretStore
+from keyring_api.storage.database import Database
+from keyring_api.storage.migrator import migrate
 
 if TYPE_CHECKING:
     from keyring_api.core.clock import Clock
@@ -52,12 +54,13 @@ class Container:
 
     settings: Settings
     clock: Clock
+    database: Database
     accounts: InMemoryAccountStore
     sessions: InMemorySessionStore
     grants: InMemoryGrantStore
     limiter: InMemoryRateLimiter
     profiles: InMemoryProfileStore
-    secrets: EncryptedFileSecretStore
+    secrets: SqlSecretStore
     outbox: Outbox
     roles: InMemoryRoleStore
     audit: InMemoryAuditLog
@@ -73,13 +76,15 @@ class Container:
     def build(cls, settings: Settings, *, clock: Clock | None = None) -> Container:
         """Construct every adapter named by ``settings``."""
         clock = clock or SystemClock()
+        database = Database(settings.database_path)
+        migrate(database, now=clock.now())
         accounts = InMemoryAccountStore()
         sessions = InMemorySessionStore(clock=clock)
         grants = InMemoryGrantStore()
         limiter = InMemoryRateLimiter(clock=clock)
         profiles = InMemoryProfileStore()
-        secrets = EncryptedFileSecretStore(
-            root=settings.secret_dir, master_key=settings.master_key_bytes()
+        secrets = SqlSecretStore(
+            database=database, master_key=settings.master_key_bytes(), clock=clock
         )
         tokens = HttpTokenEndpoint(timeout_seconds=settings.oauth_http_timeout_seconds)
         outbox = Outbox(build_sender(settings.email))
@@ -109,6 +114,7 @@ class Container:
         return cls(
             settings=settings,
             clock=clock,
+            database=database,
             accounts=accounts,
             sessions=sessions,
             grants=grants,
@@ -155,6 +161,8 @@ class Container:
         # restart is a person waiting for mail that will never arrive.
         await self.outbox.aclose()
         await self.tokens.aclose()
+        # Last: everything above may still want to write on its way out.
+        await self.database.aclose()
 
     async def actor_for(self, account_id: str, roles: tuple[str, ...]) -> Actor:
         """Resolve an account's roles into what it may do, right now.

@@ -27,14 +27,23 @@ internet. That combination is why this page is a checklist rather than a descrip
 - [ ] **Rate limiting at the proxy as well as in the app.** The app's limiter protects
       login, reset and invite redemption specifically. The proxy should cap everything
       else, because the app cannot refuse a request it has already parsed.
-- [ ] **Backups of `KEYRING_SECRET_DIR` and the signing key, and separately of the master
-      key.** Losing the secrets directory loses your family's stored logins. Losing the
+- [ ] **Backups of `KEYRING_DATABASE_PATH` and the signing key, and separately of the
+      master key.** Losing the database loses your family's stored logins. Losing the
       master key makes the backup unreadable. Storing them together makes the backup as
       sensitive as the vault.
-- [ ] **A durable store.** v1 keeps accounts, sessions and profiles in memory
-      ([ADR-0004](adr/0004-in-memory-stores.md)): a restart loses every account, and the
-      encrypted credential files on disk become unreachable. **Do this before anyone else
-      has an account.**
+
+      Back the database up with `VACUUM INTO`, never `cp`. The database runs in WAL
+      mode, so a plain copy of the main file can miss committed transactions that are
+      still in the write-ahead log:
+
+      ```
+      sqlite3 /var/lib/keyring/keyring.db "VACUUM INTO '/backup/keyring-$(date +%F).db'"
+      ```
+
+- [ ] **A durable store.** Credential material is durable. Accounts, sessions and
+      profiles are still in memory ([ADR-0004](adr/0004-in-memory-stores.md)): a restart
+      loses every account, and the encrypted credential rows become unreachable. **Do
+      this before anyone else has an account.**
 
 ## Generating the keys
 

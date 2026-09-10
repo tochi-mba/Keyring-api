@@ -123,10 +123,10 @@ class TestValidation:
         with pytest.raises(ValidationError, match="refresh margin"):
             build(oauth_refresh_margin_seconds=600, access_token_ttl_seconds=300)
 
-    def test_the_secrets_directory_is_resolved_eagerly(self) -> None:
+    def test_the_database_path_is_resolved_eagerly(self) -> None:
         # A relative path must not mean two different places before and after a chdir --
-        # which for this directory would mean silently losing every stored credential.
-        assert build(secret_dir="var/secrets").secret_dir.is_absolute()
+        # which for this file would mean silently losing every stored credential.
+        assert build(database_path="var/keyring.db").database_path.is_absolute()
 
     @pytest.mark.parametrize("bad", [0, -1])
     def test_a_non_positive_lifetime_is_rejected(self, bad: int) -> None:

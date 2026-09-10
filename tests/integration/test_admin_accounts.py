@@ -39,10 +39,12 @@ from tests.conftest import (
     make_profile,
     onboard,
     put_api_key,
+    stored_secret_count,
 )
 
 if TYPE_CHECKING:
-    from keyring_api.core.config import Settings
+    from fastapi import FastAPI
+
 
 OTHER_EMAIL = "other@example.com"
 NEW_PASSWORD = "an entirely different passphrase"
@@ -326,24 +328,23 @@ class TestAnotherAccountsProfiles:
         assert API_KEY not in response.text
 
     async def test_deleting_a_profile_takes_its_stored_credential_with_it(
-        self, client: AsyncClient, settings: Settings
+        self, client: AsyncClient, app: FastAPI
     ) -> None:
-        # A profile record is a row. A leftover secret file is decryptable credential
-        # material sitting on disk that nothing knows about and nothing will collect.
+        # A profile record is a row. Leftover credential material is decryptable and
+        # nothing knows it is there, so nothing will ever collect it.
         owner = await onboard(client)
         member = await onboard(client, OTHER_EMAIL)
         member_id = await account_id_of(client, member)
         await make_profile(client, member)
         await put_api_key(client, member, profile=PROFILE, service=SERVICE, key=API_KEY)
-        stored = settings.secret_dir / member_id / PROFILE
-        assert stored.exists()
+        assert await stored_secret_count(app, member_id, PROFILE) == 1
 
         response = await client.delete(
             f"/v1/admin/accounts/{member_id}/profiles/{PROFILE}", headers=auth(owner)
         )
 
         assert response.status_code == 204
-        assert not stored.exists()
+        assert await stored_secret_count(app, member_id, PROFILE) == 0
         assert await profile_names(client, owner, member_id) == []
 
     async def test_deleting_a_profile_nobody_has_is_not_found(self, client: AsyncClient) -> None:
@@ -433,7 +434,7 @@ class TestTheLastOwner:
         assert (await client.get("/v1/auth/me", headers=auth(owner))).status_code == 200
 
     async def test_a_refused_deletion_destroys_nothing(
-        self, client: AsyncClient, settings: Settings
+        self, client: AsyncClient, app: FastAPI
     ) -> None:
         # A refusal has to arrive before anything is destroyed. A 409 that has already
         # emptied the account's vault is data loss wearing a refusal's response: the
@@ -442,12 +443,11 @@ class TestTheLastOwner:
         owner_id = await account_id_of(client, owner)
         await make_profile(client, owner)
         await put_api_key(client, owner, profile=PROFILE, service=SERVICE, key=API_KEY)
-        stored = settings.secret_dir / owner_id / PROFILE
 
         response = await client.delete(f"/v1/admin/accounts/{owner_id}", headers=auth(owner))
 
         assert response.status_code == 409
-        assert stored.exists()
+        assert await stored_secret_count(app, owner_id) == 1
         assert await profile_names(client, owner, owner_id) == [PROFILE]
 
     async def test_an_owner_can_go_once_a_second_owner_exists(self, client: AsyncClient) -> None:

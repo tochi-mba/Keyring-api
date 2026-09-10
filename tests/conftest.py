@@ -42,7 +42,7 @@ def build_settings(tmp_path: Path, **overrides: Any) -> Settings:
     """
     defaults: dict[str, Any] = {
         "_env_file": None,
-        "secret_dir": tmp_path / "secrets",
+        "database_path": tmp_path / "keyring.db",
         "signing_key_path": tmp_path / "keys" / "signing.pem",
         "log_format": LogFormat.CONSOLE,
         "admin_token": ADMIN_TOKEN,
@@ -69,7 +69,7 @@ async def database(tmp_path: Path) -> AsyncIterator[Database]:
     runs on.
     """
     db = Database(tmp_path / "keyring.db")
-    await migrate(db, now=EPOCH)
+    migrate(db, now=EPOCH)
     try:
         yield db
     finally:
@@ -102,6 +102,27 @@ async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
 def container_of(app: FastAPI) -> Any:
     """Reach the wired container, for tests that need to inspect or substitute an adapter."""
     return app.state.container
+
+
+async def stored_secret_count(app: FastAPI, account_id: str, profile: str | None = None) -> int:
+    """How much encrypted credential material this account still has.
+
+    The successor to the tests that used to stat the secrets directory. What they were
+    really asking -- is there decryptable material left that nothing knows about -- is
+    now a row count.
+    """
+    database = container_of(app).database
+    if profile is None:
+        rows = await database.fetch_all(
+            "SELECT service FROM secrets WHERE account_id = ?", (account_id,)
+        )
+    else:
+        rows = await database.fetch_all(
+            "SELECT service FROM secrets WHERE account_id = ? AND profile_name = ?",
+            (account_id, profile),
+        )
+    count: int = len(rows)
+    return count
 
 
 async def invite(client: AsyncClient, email: str = EMAIL, *, as_token: str = ADMIN_TOKEN) -> str:

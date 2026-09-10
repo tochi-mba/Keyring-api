@@ -121,7 +121,13 @@ async def test_an_unusable_connection_makes_the_service_degraded(
     container = container_of(app)
     profiles = await container.profiles.all_profiles()
     broken = replace(profiles[0].connections[0], status=ConnectionStatus.EXPIRED)
-    await container.profiles.save(profiles[0].with_connection(broken, now=container.clock.now()))
+    await container.profiles.put_connection(
+        profiles[0].account_id,
+        profiles[0].name,
+        broken,
+        cap=container.settings.max_connections_per_profile,
+        now=container.clock.now(),
+    )
 
     response = await client.get("/healthy")
 

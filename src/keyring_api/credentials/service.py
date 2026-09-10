@@ -34,8 +34,8 @@ from keyring_api.domain.errors import (
     ConnectionNotFoundError,
     CredentialUnavailableError,
     InvalidOAuthStateError,
-    LimitExceededError,
     ProfileNotFoundError,
+    VaultSealedError,
 )
 from keyring_api.domain.profiles import (
     Connection,
@@ -46,6 +46,7 @@ from keyring_api.domain.profiles import (
     normalize_profile_name,
     normalize_service_name,
 )
+from keyring_api.secrets.envelope import SEALED_MESSAGE
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -108,13 +109,6 @@ class CredentialService:
             LimitExceededError: this account is at its profile cap.
         """
         normalized = normalize_profile_name(name)
-
-        if await self._profiles.count_for_account(account_id) >= (
-            self._settings.max_profiles_per_account
-        ):
-            msg = f"at most {self._settings.max_profiles_per_account} profiles per account"
-            raise LimitExceededError(msg)
-
         now = self._clock.now()
         profile = Profile(
             profile_id=new_profile_id(),
@@ -123,7 +117,7 @@ class CredentialService:
             created_at=now,
             updated_at=now,
         )
-        await self._profiles.add(profile)
+        await self._profiles.add(profile, cap=self._settings.max_profiles_per_account)
         logger.info("profile_created", profile=normalized)
         return profile
 
@@ -190,11 +184,13 @@ class CredentialService:
         """
         profile = await self.get_profile(account_id, profile_name)
         service = normalize_service_name(service_name)
-        self._check_connection_cap(profile, service)
+
+        # Refused before anything is written, rather than discovered halfway through.
+        # This is configuration rather than a race, so checking it up front costs nothing
+        # and keeps the two writes below from being half-done.
+        self._require_unsealed()
 
         now = self._clock.now()
-        await self._secrets.put(account_id, profile.name, service, secret)
-
         connection = Connection(
             service=service,
             kind=kind,
@@ -206,10 +202,16 @@ class CredentialService:
             # place as their first, so it has to be a decision somebody made.
             stores_totp_seed=stores_totp_seed,
         )
-        await self._profiles.save(profile.with_connection(connection, now=now))
+        # The connection goes first, and the order is the guarantee. It is the write that
+        # establishes the profile still exists and that there is room under the cap, so
+        # anything that refuses this refuses before a credential has been stored.
+        # Reversed, a refusal leaves decryptable material behind for a profile nothing
+        # will ever look in again.
+        stored = await self._put_connection(profile, connection, now=now)
+        await self._secrets.put(account_id, profile.name, service, secret)
 
         logger.info("credential_stored", profile=profile.name, service=service, kind=kind.value)
-        return connection
+        return stored
 
     async def begin_authorization(
         self, account_id: str, profile_name: str, service_name: str, *, redirect_uri: str
@@ -227,7 +229,6 @@ class CredentialService:
         profile = await self.get_profile(account_id, profile_name)
         service = normalize_service_name(service_name)
         provider = self._provider_for(service)
-        self._check_connection_cap(profile, service)
 
         state = await self._states.issue(
             FlowBinding(
@@ -249,7 +250,7 @@ class CredentialService:
             updated_at=now,
             scopes=provider.scopes,
         )
-        await self._profiles.save(profile.with_connection(pending, now=now))
+        await self._put_connection(profile, pending, now=now)
 
         logger.info("authorization_started", profile=profile.name, service=service)
         return Authorization(
@@ -348,7 +349,9 @@ class CredentialService:
             return False
 
         await self._secrets.delete(account_id, profile.name, service)
-        await self._profiles.save(profile.without_connection(service, now=self._clock.now()))
+        await self._profiles.remove_connection(
+            account_id, profile.name, service, now=self._clock.now()
+        )
         logger.info("connection_revoked", profile=profile.name, service=service)
         return True
 
@@ -425,37 +428,33 @@ class CredentialService:
     ) -> Connection:
         """Persist a token pair and mark the connection active.
 
-        The profile is re-read first, and that is not defensive tidiness. Both callers
-        read it *before* a network round trip -- ``complete_authorization`` before the
-        code exchange, ``_refresh`` before the refresh -- and a write-back based on that
-        stale object silently undoes anything that happened in between. Concretely: a
-        person believes their grant has leaked and revokes it while a refresh is in
-        flight; ``profiles.save`` re-inserts the connection the revoke removed and
-        ``secrets.put`` recreates the file it deleted, so the credential they revoked is
-        live again and nothing says so.
+        Both callers read the profile *before* a network round trip --
+        ``complete_authorization`` before the code exchange, ``_refresh`` before the
+        refresh -- so by the time this runs, what they read may be several seconds out of
+        date. Writing the whole profile back from that stale object silently undid
+        anything that happened in between: a person who believed their grant had leaked
+        and revoked it mid-refresh would find the connection re-inserted and the
+        credential live again, with nothing saying so.
+
+        The write now names one connection instead of restating the profile, so nothing
+        else can be undone by it, and the store refuses outright if the profile has gone.
 
         Raises:
-            ConnectionNotFoundError: the profile or its connection went away while the
-                provider was being called. The token just obtained is discarded, which
-                is the right outcome -- it was obtained for something that no longer
-                exists.
+            ConnectionNotFoundError: the profile went away while the provider was being
+                called. The token just obtained is discarded, which is the right outcome
+                -- it was obtained for something that no longer exists.
         """
-        current = await self._profiles.get(profile.account_id, profile.name)
-        if current is None:
-            msg = "the profile this authorization was for no longer exists"
-            raise ConnectionNotFoundError(msg)
-        profile = current
+        self._require_unsealed()
 
         now = self._clock.now()
-        await self._secrets.put(profile.account_id, profile.name, service, secret)
-
         expires_in = secret.get("expires_in")
-        existing = profile.connection(service)
         connection = Connection(
             service=service,
             kind=CredentialKind.OAUTH2_AUTHORIZATION_CODE,
             status=ConnectionStatus.ACTIVE,
-            created_at=existing.created_at if existing else now,
+            # Only used if there is no connection yet; a replacement keeps the created_at
+            # it already had, which the store returns.
+            created_at=now,
             updated_at=now,
             expires_at=now + timedelta(seconds=int(expires_in))
             if isinstance(expires_in, int)
@@ -465,19 +464,20 @@ class CredentialService:
             # stale error on a working connection sends people to fix nothing.
             last_error=None,
         )
-        await self._profiles.save(profile.with_connection(connection, now=now))
-        return connection
+        # Written before the secret, for the reason given in ``store_credential``: a
+        # profile that has gone must refuse here rather than after the material has
+        # landed.
+        stored = await self._put_connection(profile, connection, now=now)
+        await self._secrets.put(profile.account_id, profile.name, service, secret)
+        return stored
 
     async def _record_failure(self, profile: Profile, connection: Connection, reason: str) -> None:
         """Mark a connection as needing attention, keeping its stored credential."""
         logger.warning(
             "credential_refresh_failed", profile=profile.name, service=connection.service
         )
-        await self._profiles.save(
-            profile.with_connection(
-                connection.with_error(reason, now=self._clock.now()), now=self._clock.now()
-            )
-        )
+        now = self._clock.now()
+        await self._put_connection(profile, connection.with_error(reason, now=now), now=now)
 
     def _provider_for(self, service: str) -> OAuthProvider:
         """Look up a configured provider, or say plainly that there is none."""
@@ -487,14 +487,40 @@ class CredentialService:
             raise CredentialUnavailableError(msg)
         return provider
 
-    def _check_connection_cap(self, profile: Profile, service: str) -> None:
-        """Refuse a new connection past the cap, but never refuse replacing one."""
-        if profile.connection(service) is not None:
-            return
+    def _require_unsealed(self) -> None:
+        """Refuse to record a connection the vault cannot store a credential for.
 
-        if len(profile.connections) >= self._settings.max_connections_per_profile:
-            msg = f"at most {self._settings.max_connections_per_profile} connections per profile"
-            raise LimitExceededError(msg)
+        The connection is written before the secret, so that a profile that has gone or a
+        profile at its cap refuses before any material lands. That order needs this: a
+        sealed vault would otherwise leave a connection claiming a credential that was
+        never written, which is the same lie in the opposite direction.
+
+        Raises:
+            VaultSealedError: no usable key is configured.
+        """
+        if self._secrets.is_sealed:
+            raise VaultSealedError(SEALED_MESSAGE)
+
+    async def _put_connection(
+        self, profile: Profile, connection: Connection, *, now: datetime
+    ) -> Connection:
+        """Write one connection, and turn a vanished profile into the domain's word for it.
+
+        The store raises ProfileNotFoundError, which is the right answer to "read this
+        profile" and the wrong one here: by this point the caller has already found the
+        profile, and what has happened is that the thing they were connecting is gone.
+        """
+        try:
+            return await self._profiles.put_connection(
+                profile.account_id,
+                profile.name,
+                connection,
+                cap=self._settings.max_connections_per_profile,
+                now=now,
+            )
+        except ProfileNotFoundError as exc:
+            msg = "the profile this authorization was for no longer exists"
+            raise ConnectionNotFoundError(msg) from exc
 
 
 def _granted_scopes(secret: Secret, provider: OAuthProvider) -> tuple[str, ...]:

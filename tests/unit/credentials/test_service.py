@@ -13,10 +13,12 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from keyring_api.accounts.sql_store import SqlAccountStore
 from keyring_api.credentials.kinds import ApiKeyCredential
 from keyring_api.credentials.providers import OAuthProvider
 from keyring_api.credentials.service import Authorization, CredentialService
 from keyring_api.credentials.state import InMemoryOAuthStateStore
+from keyring_api.domain.accounts import Account
 from keyring_api.domain.errors import (
     ConnectionNotFoundError,
     CredentialUnavailableError,
@@ -26,7 +28,7 @@ from keyring_api.domain.errors import (
     ProfileNotFoundError,
 )
 from keyring_api.domain.profiles import ConnectionStatus, CredentialKind
-from keyring_api.profiles.store import InMemoryProfileStore
+from keyring_api.profiles.sql_store import SqlProfileStore
 from keyring_api.secrets.sql import SqlSecretStore
 from tests.fakes.clock import FakeClock
 from tests.fakes.oauth import FakeTokenEndpoint
@@ -62,11 +64,26 @@ def endpoint() -> FakeTokenEndpoint:
 
 
 @pytest.fixture
-def service(
+async def service(
     clock: FakeClock, endpoint: FakeTokenEndpoint, settings: Settings, database: Database
 ) -> CredentialService:
+    # Profiles are foreign-keyed to an account, so the two accounts these tests use have
+    # to exist. That is the point of the key: a profile whose owner is gone is credential
+    # metadata nothing can reach and nothing will collect.
+    accounts = SqlAccountStore(database=database)
+    for account_id in (ACCOUNT, OTHER):
+        await accounts.add(
+            Account(
+                account_id=account_id,
+                email=f"{account_id}@example.com",
+                password_hash="$argon2id$fake",
+                created_at=clock.now(),
+                updated_at=clock.now(),
+            )
+        )
+
     return CredentialService(
-        profiles=InMemoryProfileStore(),
+        profiles=SqlProfileStore(database=database),
         secrets=SqlSecretStore(
             database=database, master_key=settings.master_key_bytes(), clock=clock
         ),

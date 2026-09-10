@@ -33,7 +33,7 @@ from keyring_api.credentials.service import CredentialService
 from keyring_api.credentials.state import InMemoryOAuthStateStore
 from keyring_api.notifications.outbox import Outbox
 from keyring_api.notifications.senders import build_sender
-from keyring_api.profiles.store import InMemoryProfileStore
+from keyring_api.profiles.sql_store import SqlProfileStore
 from keyring_api.secrets.sql import SqlSecretStore
 from keyring_api.storage.database import Database
 from keyring_api.storage.migrator import migrate
@@ -59,7 +59,7 @@ class Container:
     sessions: SqlSessionStore
     grants: SqlGrantStore
     limiter: InMemoryRateLimiter
-    profiles: InMemoryProfileStore
+    profiles: SqlProfileStore
     secrets: SqlSecretStore
     outbox: Outbox
     roles: SqlRoleStore
@@ -85,7 +85,7 @@ class Container:
         sessions = SqlSessionStore(database=database, clock=clock)
         grants = SqlGrantStore(database=database)
         limiter = InMemoryRateLimiter(clock=clock)
-        profiles = InMemoryProfileStore()
+        profiles = SqlProfileStore(database=database)
         secrets = SqlSecretStore(
             database=database, master_key=settings.master_key_bytes(), clock=clock
         )

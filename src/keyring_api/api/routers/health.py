@@ -41,10 +41,13 @@ async def get_health(container: ContainerDep, response: Response) -> HealthRespo
     checks = {
         "accounts": CheckResult(
             status=STATUS_OK,
-            detail={
-                "accounts": await container.accounts.count(),
-                "rate_limited_callers": await container.limiter.tracked_callers(),
-            },
+            # Deliberately just a count of accounts. `rate_limited_callers` used to be
+            # here and was an enumeration oracle: the per-recipient mail cap only creates
+            # a limiter key for an address that HAS an account, so a stranger could
+            # request a reset and watch this number to learn whether it went up by one
+            # or by two. The identical response body was undone by a counter on an
+            # unauthenticated endpoint.
+            detail={"accounts": await container.accounts.count()},
         ),
         "vault": CheckResult(
             # A sealed vault is degraded rather than dead: people can still log in and

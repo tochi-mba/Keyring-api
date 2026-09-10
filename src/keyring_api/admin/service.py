@@ -22,6 +22,12 @@ the write have to be one step.
 **Never another account's credentials.** There is no method here that returns one, and no
 permission that would allow it. Administration means managing accounts, not becoming
 them -- see the module docstring of :mod:`keyring_api.domain.rbac`.
+
+**No acting upwards.** The granting rule alone does not close escalation, because
+resetting a password is close to becoming somebody. Every action *against a person* --
+reset, disable, sign out, delete -- additionally requires that the target holds no
+permission the actor lacks. Without it, an ``admin`` who cannot grant themselves
+``roles:write`` simply resets the owner's password instead.
 """
 
 from __future__ import annotations
@@ -173,6 +179,7 @@ class AdminService:
         """
         actor.require(Permission.ACCOUNTS_DISABLE)
         account = await self._require_account(account_id)
+        await self._check_can_act_on(actor, account)
 
         await self._account_service.set_status(account_id, status)
         if status is not AccountStatus.ACTIVE:
@@ -191,7 +198,7 @@ class AdminService:
     async def revoke_sessions(self, actor: Actor, account_id: str) -> int:
         """Sign an account out everywhere. The gentler answer to a lost laptop."""
         actor.require(Permission.ACCOUNTS_REVOKE_SESSIONS)
-        await self._require_account(account_id)
+        await self._check_can_act_on(actor, await self._require_account(account_id))
 
         revoked = await self._account_service.logout_everywhere(account_id)
         await self._record(
@@ -208,9 +215,15 @@ class AdminService:
         Its own permission, separate from disabling, because it is close to an account
         takeover: whoever holds the token sets the password. A role can reasonably have
         the power to disable an account without having the power to walk into it.
+
+        And for exactly that reason it is bounded by :meth:`_check_can_act_on`. Without
+        that, this method is a hole straight through the escalation guards: an ``admin``
+        who cannot grant themselves ``roles:write`` can instead reset the *owner's*
+        password and log in as somebody who already has it.
         """
         actor.require(Permission.ACCOUNTS_RESET_PASSWORD)
         account = await self._require_account(account_id)
+        await self._check_can_act_on(actor, account)
 
         grant = await self._account_service.issue_reset_for(account)
         await self._record(actor, AuditAction.ACCOUNT_PASSWORD_RESET_ISSUED, target_id=account_id)
@@ -224,7 +237,7 @@ class AdminService:
             LastOwnerError: from the store, atomically -- the last owner cannot go.
         """
         actor.require(Permission.ACCOUNTS_DELETE)
-        await self._require_account(account_id)
+        await self._check_can_act_on(actor, await self._require_account(account_id))
 
         # The account row goes FIRST, because its deletion is what carries the atomic
         # last-owner check. The other order destroys the vault and only then discovers
@@ -251,7 +264,7 @@ class AdminService:
         who has left should not require the ability to use what they left behind.
         """
         actor.require(Permission.PROFILES_DELETE_ANY)
-        await self._require_account(account_id)
+        await self._check_can_act_on(actor, await self._require_account(account_id))
 
         if not await self._credential_service.delete_profile(account_id, name):
             raise ProfileNotFoundError(NO_SUCH_PROFILE)
@@ -379,6 +392,36 @@ class AdminService:
         return updated
 
     # -- Internals ---------------------------------------------------------------------
+
+    async def _check_can_act_on(self, actor: Actor, target: Account) -> None:
+        """Refuse to act on an account whose permissions exceed the actor's own.
+
+        The counterpart to :meth:`_check_grantable`, and it exists because the granting
+        rule alone does not close escalation. Resetting somebody's password is close to
+        becoming them -- whoever holds the token sets the password -- so an ``admin``
+        who cannot grant themselves ``roles:write`` could simply reset the *owner's*
+        password, redeem the token, and log in as somebody who has it. Every guard on
+        the granting path is then irrelevant.
+
+        The same reasoning covers disabling, signing out, and deleting: each is an action
+        against a person, and being able to take it against somebody more privileged than
+        you is a way to remove the people who could stop you.
+
+        Acting on yourself is always allowed -- your own permissions are trivially a
+        subset of your own -- so this never blocks somebody managing their own account.
+
+        Raises:
+            InsufficientPermissionError: naming what the target holds that you do not.
+        """
+        if actor.is_break_glass or target.account_id == actor.account_id:
+            return
+
+        held_by_target = await self._roles.resolve(target.roles)
+        excess = held_by_target - actor.permissions
+        if excess:
+            names = ", ".join(sorted(permission.value for permission in excess))
+            msg = f"you cannot act on an account that holds permissions you do not: {names}"
+            raise InsufficientPermissionError(msg)
 
     def _check_grantable(self, actor: Actor, permissions: frozenset[Permission]) -> None:
         """Refuse to hand out or define a permission the actor does not hold.

@@ -215,3 +215,60 @@ class TestPassword:
     async def test_incomplete_material_fails_cleanly(self, secret: Secret) -> None:
         with pytest.raises(CredentialUnavailableError):
             await PasswordCredential(secret, now=lambda: 0.0).fields()
+
+
+class TestHostileHeaderTemplate:
+    """The header template is stored credential material, and it is caller-supplied.
+
+    `str.format` treats a format spec as a replacement field of its own, so
+    `{value:{value}}` raises `ValueError: Invalid format specifier '<the api key>'` --
+    putting the plaintext key inside an exception message, where the field-name redactor
+    cannot see it. Unhandled, that reaches the unhandled-exception path and is written to
+    the log by `logger.exception`.
+    """
+
+    async def test_a_template_that_leaks_the_key_is_refused(self) -> None:
+        credential = ApiKeyCredential(
+            {"api_key": "SUPER-SECRET-KEY", "template": "{value:{value}}"}
+        )
+
+        with pytest.raises(CredentialUnavailableError):
+            await credential.headers()
+
+    async def test_the_error_contains_neither_the_key_nor_the_template(self) -> None:
+        # The whole point. An error that names the key has moved the leak rather than
+        # closed it, and this error is rendered into a log line and an HTTP response.
+        credential = ApiKeyCredential(
+            {"api_key": "SUPER-SECRET-KEY", "template": "{value:{value}}"}
+        )
+
+        with pytest.raises(CredentialUnavailableError) as caught:
+            await credential.headers()
+
+        assert "SUPER-SECRET-KEY" not in str(caught.value)
+
+    async def test_the_original_exception_is_not_chained(self) -> None:
+        # `raise ... from None`, deliberately. Chaining would keep the ValueError on
+        # __cause__, and any traceback rendered downstream would print its message --
+        # which is the string containing the key.
+        credential = ApiKeyCredential(
+            {"api_key": "SUPER-SECRET-KEY", "template": "{value:{value}}"}
+        )
+
+        with pytest.raises(CredentialUnavailableError) as caught:
+            await credential.headers()
+
+        assert caught.value.__cause__ is None
+        assert "SUPER-SECRET-KEY" not in str(caught.value.__context__ or "")
+
+    @pytest.mark.parametrize("template", ["{missing}", "{0}", "{", "}", "{value:{}}"])
+    async def test_every_malformed_template_fails_the_same_way(self, template: str) -> None:
+        credential = ApiKeyCredential({"api_key": "abc", "template": template})
+
+        with pytest.raises(CredentialUnavailableError, match="header template"):
+            await credential.headers()
+
+    async def test_an_ordinary_template_still_works(self) -> None:
+        credential = ApiKeyCredential({"api_key": "abc", "template": "Token {value}"})
+
+        assert await credential.headers() == {"Authorization": "Token abc"}

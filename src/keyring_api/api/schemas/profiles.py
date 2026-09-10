@@ -154,7 +154,12 @@ class PutApiKeyRequest(BaseModel):
     template: str = Field(
         default="Bearer {value}",
         max_length=128,
-        description="How the header value is built. `{value}` is the key.",
+        # Exactly one `{value}` and no other braces. A format spec is itself a
+        # replacement field, so `{value:{value}}` makes str.format raise a ValueError
+        # whose message contains the key. The store guards that too; this stops the
+        # hostile template being accepted in the first place.
+        pattern=r"^[^{}]*\{value\}[^{}]*$",
+        description="How the header value is built. `{value}` is the key, used once.",
     )
     in_query: bool = Field(
         default=False,

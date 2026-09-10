@@ -408,6 +408,14 @@ class CredentialService:
             await self._record_failure(profile, connection, str(exc))
             raise
 
+        # Re-read before deciding to write. A revoke that landed during the refresh
+        # removed this connection, and writing the renewed token back would bring it --
+        # and the credential behind it -- straight back to life.
+        still_there = await self._profiles.get(profile.account_id, profile.name)
+        if still_there is None or still_there.connection(connection.service) is None:
+            msg = f"the {connection.service} connection was removed while it was being renewed"
+            raise ConnectionNotFoundError(msg)
+
         await self._store_oauth_secret(profile, connection.service, renewed, provider=provider)
         logger.info("credential_refreshed", profile=profile.name, service=connection.service)
         return renewed
@@ -415,7 +423,29 @@ class CredentialService:
     async def _store_oauth_secret(
         self, profile: Profile, service: str, secret: Secret, *, provider: OAuthProvider
     ) -> Connection:
-        """Persist a token pair and mark the connection active."""
+        """Persist a token pair and mark the connection active.
+
+        The profile is re-read first, and that is not defensive tidiness. Both callers
+        read it *before* a network round trip -- ``complete_authorization`` before the
+        code exchange, ``_refresh`` before the refresh -- and a write-back based on that
+        stale object silently undoes anything that happened in between. Concretely: a
+        person believes their grant has leaked and revokes it while a refresh is in
+        flight; ``profiles.save`` re-inserts the connection the revoke removed and
+        ``secrets.put`` recreates the file it deleted, so the credential they revoked is
+        live again and nothing says so.
+
+        Raises:
+            ConnectionNotFoundError: the profile or its connection went away while the
+                provider was being called. The token just obtained is discarded, which
+                is the right outcome -- it was obtained for something that no longer
+                exists.
+        """
+        current = await self._profiles.get(profile.account_id, profile.name)
+        if current is None:
+            msg = "the profile this authorization was for no longer exists"
+            raise ConnectionNotFoundError(msg)
+        profile = current
+
         now = self._clock.now()
         await self._secrets.put(profile.account_id, profile.name, service, secret)
 

@@ -110,7 +110,14 @@ class InMemoryRateLimiter:
             return len(doomed)
 
     async def tracked_callers(self) -> int:
-        """How many callers are currently remembered. Reported by ``/healthy``."""
+        """How many callers are currently remembered.
+
+        Deliberately NOT reported by ``/healthy``, which is unauthenticated. The
+        per-recipient mail cap only creates a key for an address that has an account, so
+        publishing this count let a stranger request a reset and watch whether the number
+        rose by one or by two. It stays here for the sweeper's tests and for any future
+        *authenticated* operational endpoint.
+        """
         async with self._lock:
             return len(self._attempts)
 

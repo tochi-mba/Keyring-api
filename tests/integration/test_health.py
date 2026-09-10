@@ -143,3 +143,27 @@ async def test_the_connection_count_names_nobody(client: AsyncClient) -> None:
     assert "tmdb" not in body
     assert "personal" not in body
     assert "person@example.com" not in body
+
+
+async def test_it_publishes_no_counter_that_tracks_reset_requests(
+    client: AsyncClient,
+) -> None:
+    """The subtlest leak this endpoint had, and worth a test that names it.
+
+    /healthy is unauthenticated. It used to publish `rate_limited_callers`, the size of
+    the rate limiter's map. The per-recipient mail cap only creates a key for an address
+    that HAS an account, so a stranger could request a reset for an address and watch
+    whether the number rose by one (unknown) or two (real). The identical response body
+    was undone by a counter on a different endpoint.
+    """
+    from tests.conftest import onboard
+
+    await onboard(client)
+
+    before = (await client.get("/healthy")).json()["checks"]["accounts"]["detail"]
+    await client.post("/v1/auth/password/reset-request", json={"email": "person@example.com"})
+    await client.post("/v1/auth/password/reset-request", json={"email": "nobody@example.com"})
+    after = (await client.get("/healthy")).json()["checks"]["accounts"]["detail"]
+
+    assert "rate_limited_callers" not in after
+    assert before == after

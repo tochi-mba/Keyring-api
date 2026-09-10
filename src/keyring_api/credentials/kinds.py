@@ -37,6 +37,40 @@ the type would mean every service that disagrees needs a new kind.
 """
 
 
+def _apply_template(template: str, value: str) -> str:
+    """Substitute the key into the configured header template.
+
+    Wrapped, because ``str.format`` can fail in a way that puts the *value* into the
+    exception message: a format spec is itself a replacement field, so a template of
+    ``{value:{value}}`` raises ``ValueError: Invalid format specifier '<the api key>'``.
+    Unhandled, that escapes to the unhandled-exception path and is written to the log by
+    ``logger.exception`` -- where the field-name redactor never sees it, because it is
+    inside a message rather than in a field.
+
+    So every failure becomes a credential error whose text mentions neither the template
+    nor the value, and the caller gets the documented 503 rather than a 500.
+
+    Raises:
+        CredentialUnavailableError: the template cannot be applied.
+    """
+    formatted: str | None = None
+    try:
+        formatted = template.format(value=value)
+    except (IndexError, KeyError, ValueError):
+        # Swallowed here and re-raised *below*, outside the except block, deliberately.
+        # `raise ... from None` would clear __cause__ but Python would still attach the
+        # original to __context__, where its message -- the string containing the key --
+        # remains reachable to anything that walks the chain. Raising outside the handler
+        # leaves nothing attached at all.
+        formatted = None
+
+    if formatted is None:
+        msg = "stored credential has a malformed header template"
+        raise CredentialUnavailableError(msg)
+
+    return formatted
+
+
 def _require(secret: Secret, field: str) -> str:
     """Read a required string field, or fail the way a caller can act on.
 
@@ -71,7 +105,7 @@ class ApiKeyCredential:
 
         if self.secret.get("in_query"):
             return {}
-        return {header: template.format(value=_require(self.secret, "api_key"))}
+        return {header: _apply_template(template, _require(self.secret, "api_key"))}
 
     async def query_params(self) -> dict[str, str]:
         if not self.secret.get("in_query"):

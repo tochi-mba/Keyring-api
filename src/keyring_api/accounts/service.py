@@ -262,6 +262,12 @@ class AccountService:
 
         now = self._clock.now()
         if account.is_locked(now=now) or account.status is not AccountStatus.ACTIVE:
+            # Verify anyway, and throw the answer away. This branch is the only one that
+            # could return without hashing, and a login that comes back in microseconds
+            # while every other outcome takes ~50ms is an oracle: it says this address
+            # has an account, and that the account is locked or disabled. The identical
+            # error message does not help if the clock disagrees with it.
+            self._hasher.verify(account.password_hash, password)
             logger.info("login_failed", reason="not_authenticable", subject_id=account.account_id)
             raise AuthenticationError(BAD_CREDENTIALS)
 

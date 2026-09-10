@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 from keyring_api.domain.errors import CredentialUnavailableError
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from keyring_api.credentials.providers import OAuthProvider
     from keyring_api.secrets.base import Secret
 
@@ -34,6 +36,15 @@ class FakeTokenEndpoint:
     granted_scope: str | None = None
     """Mimics a provider granting less than was asked for, which they routinely do."""
 
+    during_call: Callable[[], Awaitable[None]] | None = None
+    """Awaited while the "provider" is answering.
+
+    A provider call is the one place this service is guaranteed to be suspended for a
+    while, so it is the window in which a concurrent revoke or delete lands. This hook
+    lets a test drop something into that window without replacing a method on the fake
+    and losing the protocol conformance that makes the fake worth having.
+    """
+
     exchanges: list[str] = field(default_factory=list)
     refreshes: list[str] = field(default_factory=list)
     closed: bool = False
@@ -42,11 +53,13 @@ class FakeTokenEndpoint:
         self, provider: OAuthProvider, *, code: str, redirect_uri: str
     ) -> Secret:
         self.exchanges.append(code)
+        await self._maybe_interleave()
         self._maybe_fail(provider)
         return self._token_pair()
 
     async def refresh(self, provider: OAuthProvider, *, refresh_token: str) -> Secret:
         self.refreshes.append(refresh_token)
+        await self._maybe_interleave()
         self._maybe_fail(provider)
 
         renewed = self._token_pair()
@@ -58,6 +71,11 @@ class FakeTokenEndpoint:
 
     async def aclose(self) -> None:
         self.closed = True
+
+    async def _maybe_interleave(self) -> None:
+        """Let a test act while the provider is "answering"."""
+        if self.during_call is not None:
+            await self.during_call()
 
     def _maybe_fail(self, provider: OAuthProvider) -> None:
         if self.fail_with is not None:

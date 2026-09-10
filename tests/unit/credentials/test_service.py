@@ -689,3 +689,86 @@ class TestRevocation:
 
         with pytest.raises(ProfileNotFoundError):
             await service.revoke_connection(OTHER, "personal", "spotify")
+
+
+class TestRevocationDuringARefresh:
+    """A write-back must not resurrect something that was revoked while it was in flight.
+
+    Both OAuth write-back paths read the profile *before* a network round trip. A
+    write-back based on that stale object silently undoes anything that happened in
+    between -- and the thing most likely to happen in between is the person revoking a
+    credential they believe has leaked.
+    """
+
+    async def test_a_revoke_during_a_refresh_is_not_undone(
+        self, service: CredentialService, clock: FakeClock
+    ) -> None:
+        # The scenario in full: somebody thinks their grant leaked and revokes it while a
+        # service is mid-refresh. Without the re-read, the renewed token is written back
+        # against the pre-revoke profile -- the connection reappears, the vault file is
+        # recreated, and the credential they revoked is live again with nothing saying so.
+        await service.create_profile(ACCOUNT, "personal")
+        await connect_oauth(service)
+        clock.advance(timedelta(seconds=3600 - 60))
+
+        credential = await service.resolve_http_auth(ACCOUNT, "personal", "spotify")
+        await service.revoke_connection(ACCOUNT, "personal", "spotify")
+
+        with pytest.raises(ConnectionNotFoundError):
+            await credential.headers()
+
+        assert await service._secrets.get(ACCOUNT, "personal", "spotify") is None
+        profile = await service.get_profile(ACCOUNT, "personal")
+        assert profile.connection("spotify") is None
+
+    async def test_a_profile_deleted_during_a_refresh_is_not_recreated(
+        self, service: CredentialService, clock: FakeClock
+    ) -> None:
+        await service.create_profile(ACCOUNT, "personal")
+        await connect_oauth(service)
+        clock.advance(timedelta(seconds=3600 - 60))
+
+        credential = await service.resolve_http_auth(ACCOUNT, "personal", "spotify")
+        await service.delete_profile(ACCOUNT, "personal")
+
+        with pytest.raises(ConnectionNotFoundError):
+            await credential.headers()
+
+        with pytest.raises(ProfileNotFoundError):
+            await service.get_profile(ACCOUNT, "personal")
+
+    async def test_a_profile_deleted_during_the_code_exchange_is_not_recreated(
+        self, service: CredentialService
+    ) -> None:
+        # The same window on the other path: begin_authorization reads the profile, the
+        # person completes consent at the provider, and the profile is deleted before the
+        # callback lands. Caught by the state check here.
+        await service.create_profile(ACCOUNT, "personal")
+        state = await begin(service)
+        await service.delete_profile(ACCOUNT, "personal")
+
+        with pytest.raises(InvalidOAuthStateError):
+            await service.complete_authorization(state=state, code="the-code")
+
+        with pytest.raises(ProfileNotFoundError):
+            await service.get_profile(ACCOUNT, "personal")
+
+    async def test_a_profile_deleted_during_the_token_call_is_not_recreated(
+        self, service: CredentialService, endpoint: FakeTokenEndpoint
+    ) -> None:
+        # And the narrower window the state check cannot cover: the profile is still
+        # there when the state is redeemed, and gone by the time the provider answers.
+        # Without the re-read in _store_oauth_secret, the exchange would recreate both
+        # the profile record and its vault file.
+        await service.create_profile(ACCOUNT, "personal")
+        state = await begin(service)
+
+        async def delete_midway() -> None:
+            await service.delete_profile(ACCOUNT, "personal")
+
+        endpoint.during_call = delete_midway
+
+        with pytest.raises(ConnectionNotFoundError):
+            await service.complete_authorization(state=state, code="the-code")
+
+        assert await service._secrets.get(ACCOUNT, "personal", "spotify") is None

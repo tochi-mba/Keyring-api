@@ -8,6 +8,7 @@ whoever finds it first.
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 import pytest
 
@@ -1027,3 +1028,88 @@ class TestAdminIssuedReset:
             await service.redeem_password_reset(
                 token=first.token, new_password="a new passphrase", caller=CALLER
             )
+
+
+class TestTheLockoutTimingOracle:
+    """A locked or disabled account must cost the same as a wrong password.
+
+    The identical error message closes the *content* oracle. It does nothing about the
+    clock: this branch was the only one that could return without hashing, so a login
+    that came back in microseconds while every other outcome took ~50ms said both that
+    the address has an account and that the account is locked or disabled.
+    """
+
+    async def test_a_locked_account_still_costs_a_verification(
+        self, service: AccountService, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Asserted by observing the call rather than timing it -- a wall-clock assertion
+        # would be measuring the CI runner.
+        await onboard(service)
+        for _ in range(settings.lockout_threshold):
+            with pytest.raises(AuthenticationError):
+                await service.login(email=EMAIL, password="wrong password", caller=CALLER)
+
+        verifications: list[str] = []
+        original = service._hasher.verify
+
+        def record(stored_hash: str, password: str) -> bool:
+            verifications.append(password)
+            return original(stored_hash, password)
+
+        monkeypatch.setattr(service._hasher, "verify", record)
+
+        with pytest.raises(AuthenticationError):
+            await service.login(email=EMAIL, password=PASSWORD, caller=CALLER)
+
+        assert verifications == [PASSWORD]
+
+    async def test_a_disabled_account_still_costs_a_verification(
+        self, service: AccountService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        account_id = await onboard(service)
+        await service.set_status(account_id, AccountStatus.DISABLED)
+
+        verifications: list[str] = []
+        original = service._hasher.verify
+
+        def record(stored_hash: str, password: str) -> bool:
+            verifications.append(password)
+            return original(stored_hash, password)
+
+        monkeypatch.setattr(service._hasher, "verify", record)
+
+        with pytest.raises(AuthenticationError):
+            await service.login(email=EMAIL, password=PASSWORD, caller=CALLER)
+
+        assert verifications == [PASSWORD]
+
+    async def test_every_failing_branch_does_exactly_one_argon2_verification(
+        self, service: AccountService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Counted at the Argon2 level, not at our wrapper: verify_dummy is *implemented
+        # by* calling verify, so spying on the wrapper reports one operation as two.
+        # What matters is the number of actual hash computations, because that is what
+        # the clock measures.
+        #
+        # Unknown address, wrong password, locked, disabled: four different reasons, one
+        # unit of work each. Two would be an oracle in the other direction.
+        hasher = service._hasher
+        assert isinstance(hasher, Argon2PasswordHasher)
+        account_id = await onboard(service)
+        await service.set_status(account_id, AccountStatus.DISABLED)
+
+        computations: list[str] = []
+        argon2 = type(hasher._hasher)
+        real = argon2.verify
+
+        def record(inner: Any, stored_hash: str, password: str) -> bool:
+            computations.append(password)
+            return bool(real(inner, stored_hash, password))
+
+        monkeypatch.setattr(argon2, "verify", record)
+
+        for email in (EMAIL, "nobody@example.com"):
+            computations.clear()
+            with pytest.raises(AuthenticationError):
+                await service.login(email=email, password=PASSWORD, caller=CALLER)
+            assert len(computations) == 1, f"{email} did {len(computations)}"

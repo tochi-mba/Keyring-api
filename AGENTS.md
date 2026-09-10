@@ -100,6 +100,9 @@ deliberately and say why in the commit message — do not work around it.
     asserts no permission name even suggests it, so the boundary survives a refactor.
 11. **You cannot grant a permission you do not hold.** Enforced on assigning a role *and*
     on creating or editing one; either alone is bypassed by doing the other first.
+    **And you cannot act on an account more privileged than you** — reset, disable, sign
+    out, delete. Without that second rule the first is decoration: an `admin` who cannot
+    grant themselves `roles:write` can reset the owner's password instead.
 12. **Permission is checked before existence** in every administrative method, so a caller
     without the permission cannot use the 403/404 difference to enumerate account ids.
 13. **The last owner cannot be demoted or deleted**, and the check happens inside the

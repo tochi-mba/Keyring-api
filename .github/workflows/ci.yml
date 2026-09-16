@@ -7,5 +7,6 @@ on:
 jobs:
   service:
     uses: tochi-mba/LUCY-assistant/.github/workflows/service.yml@v1
+    secrets: inherit
     with:
       generated-files-command: uv run python scripts/dump_schema.py

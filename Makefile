@@ -51,8 +51,9 @@ smoke: ## End-to-end check against a keyring already running on :8099
 run: ## Serve the API on :8001 with reload
 	$(UV) run uvicorn keyring_api.api.app:create_app --factory --reload --port 8001
 
+# Signed-in gh fetches private client packages; with no session git fetches anonymously.
 docker: ## Build the container image
-	docker build -t keyring-api:local .
+	@GITHUB_TOKEN="$$(gh auth token 2>/dev/null)" docker build --secret id=github_token,env=GITHUB_TOKEN -t keyring-api:local .
 
 clean: ## Remove caches and build output
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .hypothesis htmlcov .coverage build dist

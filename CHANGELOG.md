@@ -26,6 +26,9 @@ All notable changes to keyring-api are recorded here. The format follows
 
 ### Changed
 
+- CI inherits `FAMILY_GITHUB_TOKEN`; image builds accept a BuildKit `github_token`
+  secret so tagged client packages can be fetched from private family repositories.
+  `make docker` uses the signed-in GitHub account without saving its token in an image.
 - **Breaking:** `GET /healthy` is liveness only -- the process is running, no I/O, and it
   never fails. The account, vault and connection checks moved to a new `GET /ready`
   (`check_readiness`), which answers 503 when any of them is unusable. An orchestrator

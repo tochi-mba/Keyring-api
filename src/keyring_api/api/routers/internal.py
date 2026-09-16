@@ -25,7 +25,6 @@ than on the person-facing surface.
 
 from __future__ import annotations
 
-import hmac
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, status
@@ -39,6 +38,8 @@ from keyring_api.api.schemas.profiles import (
 )
 from keyring_api.credentials.kinds import OAuth2Credential
 from keyring_api.domain.errors import AuthenticationError
+from keyring_client import BAD_SERVICE
+from keyring_client import AuthenticationError as ServiceRefusedError
 
 router = APIRouter(prefix="/v1/internal", tags=["internal"])
 
@@ -51,7 +52,6 @@ for. Overloading a single header would make it possible to send only one and hav
 mean either.
 """
 
-BAD_SERVICE = "service credentials were not accepted"
 BAD_USER_TOKEN = "the user token was not accepted"  # noqa: S105 -- a message, not a token
 
 _PROBLEM: dict[str, Any] = {"model": Problem}
@@ -63,24 +63,21 @@ async def calling_service(
 ) -> str:
     """Identify the calling service by its configured token.
 
-    Compared in constant time against every configured service, and the loop does not
-    stop early on a match: a comparison that returned as soon as it found one would leak,
-    in its timing, roughly where in the list the caller sits.
+    The comparison is :class:`keyring_client.ServiceAuthenticator`'s, the one every consuming
+    service uses on its own internal surface: constant time, over bytes, against every
+    configured service, with a loop that does not stop early on a match. A comparison that
+    returned as soon as it found one would leak, in its timing, roughly where in the list the
+    caller sits.
 
     Raises:
         AuthenticationError: no token, or one that matches no configured service.
     """
     if credentials is None:
         raise AuthenticationError(BAD_SERVICE)
-
-    matched: str | None = None
-    for name, token in container.settings.service_tokens.items():
-        if hmac.compare_digest(credentials.credentials, token.get_secret_value()):
-            matched = name
-
-    if matched is None:
-        raise AuthenticationError(BAD_SERVICE)
-    return matched
+    try:
+        return container.service_authenticator.identify(credentials.credentials)
+    except ServiceRefusedError as exc:
+        raise AuthenticationError(BAD_SERVICE) from exc
 
 
 ServiceDep = Annotated[str, Depends(calling_service)]

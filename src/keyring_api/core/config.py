@@ -18,10 +18,20 @@ import binascii
 import os
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Self
+from typing import TYPE_CHECKING, Annotated, Any, Self
 
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from keyring_client import check_service_token
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -32,8 +42,29 @@ ENV_NESTED_DELIMITER = "__"
 MASTER_KEY_BYTES = 32
 """AES-256-GCM. Not configurable: a shorter key is a weaker vault, not a preference."""
 
+MIN_SERVICE_TOKEN_CHARS = 32
+"""The shortest service token accepted at startup.
+
+``keyring_client.check_service_token`` applies the same rule on the consuming side, and a test
+holds the two numbers together so neither can drift.
+"""
+
 PositiveInt = Annotated[int, Field(gt=0)]
 PositiveFloat = Annotated[float, Field(gt=0)]
+
+
+def _validated_settings_api_token(value: SecretStr | None) -> SecretStr | None:
+    """Refuse a token settings-api would never accept, without echoing it.
+
+    Runs after wrapping as ``SecretStr``, so a validation error's input is the secret
+    (asterisks), not the presented string.
+    """
+    if value is not None:
+        check_service_token(value.get_secret_value())
+    return value
+
+
+SettingsApiToken = Annotated[SecretStr | None, AfterValidator(_validated_settings_api_token)]
 
 
 class LogFormat(StrEnum):
@@ -210,8 +241,14 @@ class Settings(BaseSettings):
     # -- Identity ----------------------------------------------------------------------
     app_name: str = "keyring"
     environment: str = "local"
-    issuer: str = "https://keyring.local"
-    """Goes into every issued token's ``iss`` claim; consuming services pin it."""
+    issuer: str = "http://127.0.0.1:8001"
+    """Goes into every issued token's ``iss`` claim; consuming services pin it.
+
+    The loopback default is the one every sibling service defaults to as well, so a family
+    started locally agrees about who signed a token without anybody setting anything. A
+    deployment sets this to keyring's public URL, and every consumer's issuer to the same
+    string.
+    """
 
     # -- Observability -----------------------------------------------------------------
     log_level: str = "INFO"
@@ -277,6 +314,30 @@ class Settings(BaseSettings):
     credential only for that user. Without the pairing, any service that could reach
     keyring could request anybody's token -- the confused deputy, moved to the service
     boundary.
+
+    The name is not decoration: a user token presented on ``/v1/internal`` must have been
+    minted with exactly this name as its audience. Name each service the way its callers
+    mint -- ``media-tool``, ``spotify-api`` -- and use the same name as that service's
+    audience everywhere else it is checked, settings-api's grants included.
+    """
+
+    # -- Per-person settings -----------------------------------------------------------
+    settings_api_base_url: str | None = None
+    """Where settings-api is. Unset, every person gets this configuration as it stands.
+
+    Set, each login reads that person's ``keyring`` settings: idle TTL, absolute ceiling
+    and session cap. The ceilings in this configuration still apply on top of what
+    anybody chooses -- a person may narrow a cap and never raise it. The grant there
+    needs ``audience_prefix`` ``keyring``: this service mints the user token it presents,
+    with this service's own audience.
+    """
+
+    settings_api_token: SettingsApiToken = None
+    """This service's entry in settings-api's ``SETTINGS_API_SERVICES``.
+
+    At least 32 characters, the rule settings-api enforces on its side. Its grant there
+    needs ``audience_prefix`` ``keyring`` -- this service's token audience, not a
+    caller's.
     """
 
     # -- Storage -----------------------------------------------------------------------
@@ -338,6 +399,30 @@ class Settings(BaseSettings):
 
         return value
 
+    @field_validator("service_tokens")
+    @classmethod
+    def _check_service_tokens(cls, value: dict[str, SecretStr]) -> dict[str, SecretStr]:
+        """Refuse a placeholder, a pasted newline, or two services sharing one token.
+
+        A service token is the entire proof that a caller on ``/v1/internal`` is a service
+        at all, and a deployment that pasted ``change-me`` looks exactly like a working one
+        until somebody guesses it. Two services sharing a token would make whichever name
+        matched decide the audience a user token must carry, so the weaker service could
+        present the stronger one's tokens.
+        """
+        secrets = [token.get_secret_value() for token in value.values()]
+        for secret in secrets:
+            if secret.strip() != secret or len(secret) < MIN_SERVICE_TOKEN_CHARS:
+                msg = (
+                    f"each service token must be at least {MIN_SERVICE_TOKEN_CHARS} "
+                    "characters, with no surrounding whitespace"
+                )
+                raise ValueError(msg)
+        if len(set(secrets)) != len(secrets):
+            msg = "two services share a service token; each needs its own"
+            raise ValueError(msg)
+        return value
+
     @model_validator(mode="after")
     def _check_lifetimes(self) -> Self:
         if self.session_absolute_ttl_seconds < self.session_ttl_seconds:
@@ -350,6 +435,46 @@ class Settings(BaseSettings):
 
         return self
 
+    @field_validator("settings_api_base_url")
+    @classmethod
+    def _blank_settings_url_is_unset(cls, value: str | None) -> str | None:
+        """``KEYRING_SETTINGS_API_BASE_URL=`` in a ``.env`` means off, not an empty URL."""
+        return value or None
+
+    @field_validator("settings_api_token", mode="before")
+    @classmethod
+    def _blank_settings_token_is_unset(cls, value: Any) -> Any:
+        if value is None or value == "":
+            return None
+        if isinstance(value, SecretStr) and not value.get_secret_value():
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def _check_settings_api_is_whole(self) -> Self:
+        """Refuse half a settings-api configuration, and a token that could never work.
+
+        A URL with no token would be refused on every call, and a token with no URL is a
+        secret configured for nothing. Either is somebody's mistake, and startup is the
+        cheapest place to hear about it.
+        """
+        if (self.settings_api_base_url is None) != (self.settings_api_token is None):
+            msg = "settings_api_base_url and settings_api_token must be set together"
+            raise ValueError(msg)
+        return self
+
+    @property
+    def settings_api(self) -> tuple[str, SecretStr] | None:
+        """Where settings-api is and how to authenticate to it, or ``None`` when unused.
+
+        One value rather than two optional ones, so that nothing downstream has to
+        re-establish that the pair is whole: :meth:`_check_settings_api_is_whole` already
+        refused to construct settings where it is not.
+        """
+        if self.settings_api_base_url is None or self.settings_api_token is None:
+            return None
+        return self.settings_api_base_url, self.settings_api_token
+
     def master_key_bytes(self) -> bytes | None:
         """Return the decoded master key, or ``None`` when none is configured."""
         if self.master_key is None:
@@ -359,6 +484,28 @@ class Settings(BaseSettings):
 
 class UnknownSettingError(ValueError):
     """A ``KEYRING_``-prefixed variable is set that no setting corresponds to."""
+
+
+class ConfigurationError(ValueError):
+    """The configuration was rejected, and this is why -- without the values.
+
+    pydantic's own :class:`~pydantic.ValidationError` renders the **input** beside each
+    failure, and a startup crash is normally logged verbatim. For most settings that is
+    helpful. For ``master_key``, ``admin_token`` and ``service_tokens`` it pastes the secret
+    into the log -- the one place the ``SecretStr`` wrapper exists to keep it out of, and the
+    wrapper does not help, because pydantic reports the raw input rather than the coerced
+    value. So :func:`load_settings` re-raises this instead, carrying each failure's location
+    and message only, with the chain cut so the original is not attached to the traceback.
+    """
+
+
+def describe_validation_error(exc: ValidationError) -> str:
+    """Render a validation error as locations and messages only. Never the input."""
+    problems = (
+        f"{'.'.join(str(part) for part in error['loc']) or '<root>'}: {error['msg']}"
+        for error in exc.errors()
+    )
+    return "invalid configuration: " + "; ".join(problems)
 
 
 def known_env_names(model: type[BaseModel] = Settings, prefix: str = ENV_PREFIX) -> set[str]:
@@ -400,6 +547,15 @@ def check_for_unknown_env_vars(environ: Mapping[str, str] | None = None) -> None
 
 
 def load_settings() -> Settings:
-    """Build settings from the environment and ``.env``."""
+    """Build settings from the environment and ``.env``.
+
+    Raises:
+        UnknownSettingError: a ``KEYRING_``-prefixed variable matches no setting.
+        ConfigurationError: a setting was rejected. Names the setting and the rule, and
+            never the value -- see the class.
+    """
     check_for_unknown_env_vars()
-    return Settings()
+    try:
+        return Settings()
+    except ValidationError as exc:
+        raise ConfigurationError(describe_validation_error(exc)) from None

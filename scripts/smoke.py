@@ -8,7 +8,7 @@ it is actually running: a real process, real HTTP, real files on disk.
       'import base64,os; print(base64.b64encode(os.urandom(32)).decode())')"
     export KEYRING_ADMIN_TOKEN=break-glass-token-for-smoke-test
     export KEYRING_PORT=8099
-    export KEYRING_SERVICE_TOKENS='{"media-tool":"svc-token-smoke"}'
+    export KEYRING_SERVICE_TOKENS='{"media-tool":"svc-token-for-the-smoke-test-0123456789"}'
     uv run keyring-api &
     python scripts/smoke.py
 
@@ -31,7 +31,7 @@ from typing import Any
 
 BASE = "http://127.0.0.1:8099"
 ADMIN = "break-glass-token-for-smoke-test"
-SERVICE = "svc-token-smoke"
+SERVICE = "svc-token-for-the-smoke-test-0123456789"
 OWNER_PASSWORD = "correct horse battery staple"  # noqa: S105 -- a test fixture
 FAMILY_PASSWORD = "another long passphrase"  # noqa: S105 -- a test fixture
 API_KEY = "THE-SECRET-KEY"

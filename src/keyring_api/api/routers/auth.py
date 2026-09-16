@@ -65,13 +65,15 @@ def caller_of(request: Request) -> str:
         "Returns a session token to send as `Authorization: Bearer <token>` on every "
         "other endpoint. The token is shown once and stored only as a hash, so it "
         "cannot be recovered -- losing it means logging in again. Responds 401 for any "
-        "failure, without distinguishing an unknown address from a wrong password, and "
-        "429 when too many attempts come from one caller."
+        "failure, without distinguishing an unknown address from a wrong password, 429 "
+        "when too many attempts come from one caller, and 503 when this service's "
+        "settings-api grant is refused."
     ),
     response_model=SessionResponse,
     responses={
         status.HTTP_401_UNAUTHORIZED: _PROBLEM,
         status.HTTP_429_TOO_MANY_REQUESTS: _PROBLEM,
+        status.HTTP_503_SERVICE_UNAVAILABLE: _PROBLEM,
     },
 )
 async def login(body: LoginRequest, container: ContainerDep, request: Request) -> SessionResponse:

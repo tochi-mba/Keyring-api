@@ -1,7 +1,8 @@
 # The HTTP contract
 
 One service, one `/openapi.json`, served at `/docs`. Everything under `/v1` requires
-authentication; `/healthy` and `/.well-known/jwks.json` do not, for reasons given below.
+authentication; `/healthy`, `/ready` and `/.well-known/jwks.json` do not, for reasons
+given below.
 
 Route `operation_id`s are **public API** — they become MCP tool names
 ([docs/mcp.md](mcp.md)) — and a contract test pins the exact set. Renaming one is a
@@ -42,7 +43,8 @@ to ask. That is not sloppiness:
 
 | Operation | Route | Notes |
 | --- | --- | --- |
-| `get_health` | `GET /healthy` | Unauthenticated. Counts and yes/no only. 503 when degraded. |
+| `get_health` | `GET /healthy` | Unauthenticated liveness. No I/O, and it never fails. |
+| `check_readiness` | `GET /ready` | Unauthenticated. Counts and yes/no only. 503 when degraded. |
 | `get_jwks` | `GET /.well-known/jwks.json` | Unauthenticated. Public key material only. |
 
 Both are open by necessity: a load balancer cannot hold a session, and a verifier has

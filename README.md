@@ -34,6 +34,8 @@ suite at 100% branch coverage.
 
 ## Where to read next
 
+For another service, start with [Integrating with keyring](docs/integration.md).
+
 | Document | What it covers |
 | --- | --- |
 | [AGENTS.md](AGENTS.md) | How work is done here: the map, the invariants, the recipes. |

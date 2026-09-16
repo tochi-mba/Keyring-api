@@ -86,7 +86,7 @@ class FileEmailSender:
         try:
             self._directory.mkdir(mode=OUTBOX_DIR_MODE, parents=True, exist_ok=True)
             self._directory.chmod(OUTBOX_DIR_MODE)
-            path.write_text(_render(message))
+            path.write_text(_render(message), encoding="utf-8")
             path.chmod(OUTBOX_FILE_MODE)
         except OSError:
             logger.warning("email_write_failed", to=message.to_address)

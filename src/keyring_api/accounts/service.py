@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from keyring_api.accounts.store import AccountStore, GrantStore, SessionStore
     from keyring_api.core.clock import Clock
     from keyring_api.core.config import Settings
+    from keyring_api.core.preferences import PreferenceSource
     from keyring_api.notifications.outbox import Outbox
 
 logger = get_logger(__name__)
@@ -115,7 +116,7 @@ class SweepResult:
 class AccountService:
     """Orchestrates the account stores, the hasher, and the two guessing defences."""
 
-    # PLR0913: seven collaborators, every one of them keyword-only and injected. That
+    # PLR0913: eight collaborators, every one of them keyword-only and injected. That
     # is what constructor injection looks like when the alternative -- a bundle object
     # the service reaches into -- would hide which dependencies it actually has.
     def __init__(  # noqa: PLR0913
@@ -129,6 +130,7 @@ class AccountService:
         outbox: Outbox,
         clock: Clock,
         settings: Settings,
+        preferences: PreferenceSource,
     ) -> None:
         self._accounts = accounts
         self._sessions = sessions
@@ -138,6 +140,7 @@ class AccountService:
         self._outbox = outbox
         self._clock = clock
         self._settings = settings
+        self._preferences = preferences
 
     @property
     def delivers_email(self) -> bool:
@@ -243,6 +246,7 @@ class AccountService:
         Raises:
             RateLimitedError: too many attempts from this caller.
             AuthenticationError: for every other failure, undifferentiated.
+            PreferencesUnavailableError: settings-api refused this service's grant.
         """
         await self._limiter.check(
             SCOPE_LOGIN,
@@ -315,7 +319,13 @@ class AccountService:
         return account
 
     async def _open_session(self, account: Account, *, now: datetime) -> LoginResult:
-        """Mint a session token and store only its hash."""
+        """Mint a session token and store only its hash.
+
+        Preferences are resolved here, after the password has succeeded, so a failed
+        login never asks settings-api. The idle TTL is stamped on the row so a later
+        settings change does not reshape this session mid-life.
+        """
+        prefs = await self._preferences.for_account(account.account_id)
         token = new_token()
         session = Session(
             session_id=new_session_id(),
@@ -323,15 +333,15 @@ class AccountService:
             token_hash=hash_token(token),
             created_at=now,
             last_used_at=now,
-            expires_at=now + timedelta(seconds=self._settings.session_ttl_seconds),
-            absolute_expires_at=now
-            + timedelta(seconds=self._settings.session_absolute_ttl_seconds),
+            expires_at=now + timedelta(seconds=prefs.session_ttl_seconds),
+            absolute_expires_at=now + timedelta(seconds=prefs.session_absolute_ttl_seconds),
+            idle_ttl_seconds=prefs.session_ttl_seconds,
         )
         # Stored and trimmed as one operation. This used to be a loop here -- count,
         # drop the oldest, count again -- and two logins arriving together each saw room
         # the other was about to take, so the cap was advisory. An unbounded session list
         # is memory an authenticated caller allocates for free, one login at a time.
-        await self._sessions.add_within_cap(session, cap=self._settings.max_sessions_per_account)
+        await self._sessions.add_within_cap(session, cap=prefs.max_sessions)
 
         logger.info("login_succeeded", subject_id=account.account_id, session_id=session.session_id)
         return LoginResult(
@@ -362,7 +372,11 @@ class AccountService:
 
         refreshed = session.touched(
             now=self._clock.now(),
-            idle_ttl_seconds=self._settings.session_ttl_seconds,
+            idle_ttl_seconds=(
+                session.idle_ttl_seconds
+                if session.idle_ttl_seconds is not None
+                else self._settings.session_ttl_seconds
+            ),
             absolute_expires_at=None,
         )
         await self._sessions.save(refreshed)

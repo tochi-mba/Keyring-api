@@ -30,7 +30,10 @@ def test_session_ids_are_unique_and_recognisable() -> None:
 
 
 def test_a_fresh_session_is_valid() -> None:
-    assert not make_session().is_expired(now=EPOCH)
+    session = make_session()
+
+    assert not session.is_expired(now=EPOCH)
+    assert session.idle_ttl_seconds is None
 
 
 def test_a_session_expires_when_it_has_been_idle_too_long() -> None:

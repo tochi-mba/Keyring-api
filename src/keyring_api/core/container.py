@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from keyring_api.accounts.hashing import Argon2PasswordHasher
 from keyring_api.accounts.ratelimit import InMemoryRateLimiter
@@ -27,6 +27,7 @@ from keyring_api.admin.service import Actor, AdminService
 from keyring_api.audit.sql_log import SqlAuditLog
 from keyring_api.core.clock import SystemClock
 from keyring_api.core.logging import get_logger
+from keyring_api.core.preferences import build_preference_source
 from keyring_api.credentials.oauth_client import HttpTokenEndpoint
 from keyring_api.credentials.providers import load_providers
 from keyring_api.credentials.service import CredentialService
@@ -37,6 +38,7 @@ from keyring_api.profiles.sql_store import SqlProfileStore
 from keyring_api.secrets.sql import SqlSecretStore
 from keyring_api.storage.database import Database
 from keyring_api.storage.migrator import migrate
+from keyring_client import ServiceAuthenticator
 
 if TYPE_CHECKING:
     from keyring_api.accounts.ratelimit import RateLimiter
@@ -45,6 +47,7 @@ if TYPE_CHECKING:
     from keyring_api.audit.log import AuditLog
     from keyring_api.core.clock import Clock
     from keyring_api.core.config import Settings
+    from keyring_api.core.preferences import PreferenceSource
     from keyring_api.profiles.store import ProfileStore
     from keyring_api.secrets.base import SecretStore
 
@@ -78,12 +81,30 @@ class Container:
     admin_service: AdminService
     signer: TokenSigner
     tokens: HttpTokenEndpoint
+    service_authenticator: ServiceAuthenticator
+    preferences: PreferenceSource
     started_monotonic: float
     _sweeper: asyncio.Task[None] | None = None
 
     @classmethod
-    def build(cls, settings: Settings, *, clock: Clock | None = None) -> Container:
-        """Construct every adapter named by ``settings``."""
+    def build(
+        cls,
+        settings: Settings,
+        *,
+        clock: Clock | None = None,
+        preferences: PreferenceSource | None = None,
+        settings_client: Any = None,
+    ) -> Container:
+        """Construct every adapter named by ``settings``.
+
+        Args:
+            settings: the configuration to wire.
+            clock: substituted by tests that need to control time.
+            preferences: substituted by tests, which read people's settings from a fake
+                settings-api rather than a real one.
+            settings_client: substituted by tests with a fake settings-api client. Ignored
+                when ``preferences`` is already provided.
+        """
         clock = clock or SystemClock()
         database = Database(settings.database_path)
         migrate(database, now=clock.now())
@@ -102,6 +123,18 @@ class Container:
         outbox = Outbox(build_sender(settings.email))
         roles = SqlRoleStore(database=database)
         audit = SqlAuditLog(database=database, clock=clock)
+        signer = TokenSigner(
+            key_path=settings.signing_key_path, issuer=settings.issuer, clock=clock
+        )
+        # Constructed, not contacted. The first login that needs somebody's own session
+        # lifetimes is what provokes the first fetch; a keyring that will not start
+        # because settings-api is down is a keyring that cannot report it being down.
+        # An empty URL keeps today's behaviour exactly.
+        chosen = (
+            preferences
+            if preferences is not None
+            else build_preference_source(settings, client=settings_client, issuer=signer)
+        )
 
         account_service = AccountService(
             accounts=accounts,
@@ -112,6 +145,7 @@ class Container:
             outbox=outbox,
             clock=clock,
             settings=settings,
+            preferences=chosen,
         )
         credential_service = CredentialService(
             profiles=profiles,
@@ -121,6 +155,13 @@ class Container:
             providers=load_providers(settings.oauth_providers_path),
             clock=clock,
             settings=settings,
+        )
+
+        # The same constant-time comparison every consuming service runs on its own internal
+        # surface, so "which service is calling" has one implementation in the family.
+        service_authenticator = ServiceAuthenticator(
+            {name: token.get_secret_value() for name, token in settings.service_tokens.items()},
+            logger=get_logger("keyring_api.api.routers.internal"),
         )
 
         return cls(
@@ -134,10 +175,9 @@ class Container:
             profiles=profiles,
             secrets=secrets,
             tokens=tokens,
+            service_authenticator=service_authenticator,
             outbox=outbox,
-            signer=TokenSigner(
-                key_path=settings.signing_key_path, issuer=settings.issuer, clock=clock
-            ),
+            signer=signer,
             roles=roles,
             audit=audit,
             account_service=account_service,
@@ -150,6 +190,7 @@ class Container:
                 credential_service=credential_service,
                 clock=clock,
             ),
+            preferences=chosen,
             started_monotonic=clock.monotonic(),
         )
 
@@ -172,6 +213,7 @@ class Container:
         # Drained before the HTTP client closes: a queued reset link dropped by a
         # restart is a person waiting for mail that will never arrive.
         await self.outbox.aclose()
+        await self.preferences.aclose()
         await self.tokens.aclose()
         # Last: everything above may still want to write on its way out.
         await self.database.aclose()

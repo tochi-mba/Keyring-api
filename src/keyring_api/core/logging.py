@@ -157,6 +157,29 @@ def configure_logging(*, level: str, log_format: LogFormat) -> None:
     )
 
 
+class _NamedLogger:
+    """A logger that resolves against the configuration in force *when it is called*.
+
+    ``structlog.get_logger().bind(logger=name)`` binds eagerly: ``.bind()`` snapshots the
+    processor chain in force at that moment. Every module here does
+    ``logger = get_logger(__name__)`` at import, which is before
+    :func:`configure_logging` has run -- so those loggers would keep structlog's
+    defaults, ``KEYRING_LOG_FORMAT=json`` would validate and do nothing for them, and
+    the redactor would never run.
+
+    Resolving per call costs a bind on each record, at a volume of a few records per
+    request.
+    """
+
+    __slots__ = ("_name",)
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def __getattr__(self, method: str) -> Any:
+        return getattr(structlog.get_logger().bind(logger=self._name), method)
+
+
 def get_logger(name: str) -> Any:
     """Return a logger tagged with ``name``.
 
@@ -166,4 +189,4 @@ def get_logger(name: str) -> Any:
     The return type is deliberately loose: structlog's filtering bound loggers are
     generated at configuration time and have no single static type.
     """
-    return structlog.get_logger().bind(logger=name)
+    return _NamedLogger(name)

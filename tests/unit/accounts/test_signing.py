@@ -11,6 +11,7 @@ import pytest
 from keyring_api.accounts.signing import ALGORITHM, TokenSigner
 from keyring_api.domain.errors import AuthenticationError
 from tests.fakes.clock import FakeClock
+from tests.support.filemode import assert_mode
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -40,13 +41,11 @@ class TestKeyMaterial:
     def test_the_key_file_is_owner_only(self, tmp_path: Path, clock: FakeClock) -> None:
         # This key is the authority behind every token another service trusts. Anyone
         # who can read it can mint a token for any account.
-        import stat
-
         path = tmp_path / "keys" / "signing.pem"
         TokenSigner(key_path=path, issuer=ISSUER, clock=clock)
 
-        assert stat.S_IMODE(path.stat().st_mode) == 0o600
-        assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+        assert_mode(path, 0o600)
+        assert_mode(path.parent, 0o700)
 
     def test_the_key_survives_a_restart(self, tmp_path: Path, clock: FakeClock) -> None:
         # A key that changed on restart would invalidate every token in flight and force

@@ -24,6 +24,9 @@ from keyring_api.core.logging import (
     redact_secrets,
 )
 
+_module_logger = get_logger("tests.unit.core.test_logging")
+"""Created at import, before any configure_logging call -- exactly like every module in src."""
+
 
 def render(event_dict: dict[str, object]) -> dict[str, object]:
     """Run one event dict through the redaction processor."""
@@ -121,6 +124,19 @@ class TestConfiguration:
         bound = get_logger("keyring_api.test")._context
 
         assert bound["logger"] == "keyring_api.test"
+
+    def test_a_logger_made_before_configuration_honours_json_configured_after(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Every src module binds a logger at import, which is before configure_logging.
+        # If that snapshot stuck, KEYRING_LOG_FORMAT=json would do nothing for them.
+        configure_logging(level="INFO", log_format=LogFormat.JSON)
+        _module_logger.warning("probe", path="scratch/x")
+
+        record = json.loads(capsys.readouterr().out)
+        assert record["event"] == "probe"
+        assert record["logger"] == "tests.unit.core.test_logging"
+        assert record["path"] == "scratch/x"
 
     def test_the_configured_pipeline_redacts_end_to_end(
         self, capsys: pytest.CaptureFixture[str]

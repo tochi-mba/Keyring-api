@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
-import stat
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from keyring_api.core.config import LogFormat
+from keyring_api.core.logging import configure_logging
 from keyring_api.credentials.providers import OAuthProvider, load_providers
 from keyring_api.domain.errors import CredentialUnavailableError
+from tests.support.filemode import assert_mode
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,6 +32,15 @@ def write_providers(tmp_path: Path, entries: object, *, mode: int = 0o600) -> Pa
     path.write_text(json.dumps(entries))
     path.chmod(mode)
     return path
+
+
+def pin_permission_bits(monkeypatch: pytest.MonkeyPatch, *, present: bool) -> None:
+    """Decide for the loader whether this platform has permission bits.
+
+    Pinned rather than detected, so both branches run wherever the suite does: Linux CI
+    reaches the Windows branch this way, and a native Windows run reaches the POSIX one.
+    """
+    monkeypatch.setattr("keyring_api.credentials.providers.has_permission_bits", lambda: present)
 
 
 class TestLoading:
@@ -74,10 +85,17 @@ class TestLoading:
 
 class TestFilePermissions:
     @pytest.mark.parametrize("mode", [0o644, 0o640, 0o604, 0o666])
-    def test_a_file_readable_by_anyone_else_is_refused(self, tmp_path: Path, mode: int) -> None:
+    def test_a_file_readable_by_anyone_else_is_refused(
+        self, tmp_path: Path, mode: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # This file holds client secrets. Refusing to start is a worse morning than a
         # warning nobody reads; it is a much better one than six months of a
         # group-readable secret.
+        #
+        # Pinned to the POSIX branch, which is the one Linux takes anyway. On Windows the
+        # pin is what lets the refusal run at all, and every mode here reads back as 0666
+        # there -- still readable by others, so still refused.
+        pin_permission_bits(monkeypatch, present=True)
         path = write_providers(tmp_path, [ENTRY], mode=mode)
 
         with pytest.raises(CredentialUnavailableError, match="0600"):
@@ -94,7 +112,59 @@ class TestFilePermissions:
         path = write_providers(tmp_path, [ENTRY], mode=0o400)
 
         assert load_providers(path)
-        assert stat.S_IMODE(path.stat().st_mode) == 0o400
+        assert_mode(path, 0o400)
+
+
+class TestWhetherTheModeIsChecked:
+    """The platform decision, pinned each way so both branches run on any OS.
+
+    POSIX has a mode to compare. Windows does not -- NTFS keeps no permission bits, and
+    every writable file reads 0666 -- so there the comparison is skipped, and said to be.
+    """
+
+    def test_where_there_are_permission_bits_a_refusal_comes_with_no_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The warning means "nothing was checked". Printed where the check did run, it
+        # would teach operators to ignore it on the one platform where it is true.
+        configure_logging(level="INFO", log_format=LogFormat.JSON)
+        pin_permission_bits(monkeypatch, present=True)
+        path = write_providers(tmp_path, [ENTRY], mode=0o644)
+
+        with pytest.raises(CredentialUnavailableError, match="0600"):
+            load_providers(path)
+
+        assert "oauth_provider_file_mode_unchecked" not in capsys.readouterr().out
+
+    def test_where_there_are_none_a_file_the_mode_check_would_refuse_is_loaded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Otherwise keyring run natively on Windows could load no provider at all, since
+        # no file there can read back as 0600.
+        pin_permission_bits(monkeypatch, present=False)
+        path = write_providers(tmp_path, [ENTRY], mode=0o644)
+
+        assert load_providers(path)["spotify"].client_id == "client-abc"
+
+    def test_where_there_are_none_one_warning_names_the_path_and_nothing_inside_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A check that is quietly skipped looks exactly like one that passed. The path is
+        # there so an operator can find the file and look at its ACL; the contents are
+        # not, because the contents are client secrets.
+        configure_logging(level="INFO", log_format=LogFormat.JSON)
+        pin_permission_bits(monkeypatch, present=False)
+        path = write_providers(tmp_path, [ENTRY])
+
+        load_providers(path)
+
+        output = capsys.readouterr().out
+        records = [json.loads(line) for line in output.splitlines()]
+        assert [(record["event"], record["level"], record["path"]) for record in records] == [
+            ("oauth_provider_file_mode_unchecked", "warning", str(path))
+        ]
+        assert "POSIX-only" in records[0]["reason"]
+        assert "secret-abc" not in output
 
 
 class TestAuthorizationUrl:

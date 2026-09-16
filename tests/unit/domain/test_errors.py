@@ -9,6 +9,7 @@ from keyring_api.domain.errors import (
     AuthenticationError,
     CredentialUnavailableError,
     DomainError,
+    PreferencesUnavailableError,
     RateLimitedError,
     VaultSealedError,
 )
@@ -29,6 +30,13 @@ def test_a_sealed_vault_is_a_credential_failure_first() -> None:
 
 def test_every_error_shares_one_base_a_handler_can_catch() -> None:
     assert issubclass(AuthenticationError, DomainError)
+
+
+def test_a_preferences_failure_is_not_an_authentication_failure() -> None:
+    # A missing grant is this service deployed wrong, not a wrong password. Rendering it
+    # as 401 would send the person through a login that cannot fix it.
+    assert not issubclass(PreferencesUnavailableError, AuthenticationError)
+    assert issubclass(PreferencesUnavailableError, DomainError)
 
 
 def test_a_rate_limit_carries_how_long_to_wait() -> None:

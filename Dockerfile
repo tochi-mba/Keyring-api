@@ -17,7 +17,10 @@ WORKDIR /app
 
 # Dependencies first, in their own layer: application edits then rebuild in seconds
 # rather than re-resolving the whole tree.
+# The keyring client ships from this repository and keyring uses it too, for the service-token
+# comparison on its internal surface, so it is a dependency like any other.
 COPY pyproject.toml uv.lock README.md ./
+COPY clients/python/ clients/python/
 RUN uv sync --no-install-project --no-dev
 
 COPY src/ src/

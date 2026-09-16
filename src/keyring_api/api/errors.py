@@ -40,6 +40,7 @@ from keyring_api.domain.errors import (
     InvalidRoleError,
     LastOwnerError,
     LimitExceededError,
+    PreferencesUnavailableError,
     ProfileExistsError,
     ProfileNotFoundError,
     RateLimitedError,
@@ -97,6 +98,7 @@ _DOMAIN_STATUS: dict[type[Exception], int] = {
     ConnectionNotFoundError: status.HTTP_404_NOT_FOUND,
     LimitExceededError: status.HTTP_429_TOO_MANY_REQUESTS,
     CredentialUnavailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    PreferencesUnavailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
 }
 
 

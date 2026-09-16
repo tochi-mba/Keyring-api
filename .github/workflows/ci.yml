@@ -4,9 +4,12 @@ on:
     branches: ["**"]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
 jobs:
   service:
     uses: tochi-mba/LUCY-assistant/.github/workflows/service.yml@v1
-    secrets: inherit
     with:
       generated-files-command: uv run python scripts/dump_schema.py

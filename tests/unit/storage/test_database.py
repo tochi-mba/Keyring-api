@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-import stat
 import threading
 from functools import partial
 from typing import TYPE_CHECKING
@@ -28,6 +27,7 @@ from keyring_api.storage.database import (
     make_private,
     require_foreign_keys,
 )
+from tests.support.filemode import assert_mode
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -288,7 +288,7 @@ class TestFileMode:
     """
 
     async def test_the_database_is_readable_only_by_its_owner(self, db: Database) -> None:
-        assert stat.S_IMODE(db.path.stat().st_mode) == DATABASE_FILE_MODE
+        assert_mode(db.path, DATABASE_FILE_MODE)
 
     async def test_the_write_ahead_log_is_too(self, db: Database) -> None:
         # It holds committed rows that have not been checkpointed yet, so a readable WAL
@@ -297,7 +297,7 @@ class TestFileMode:
         wal = db.path.with_name(db.path.name + "-wal")
 
         assert wal.exists()
-        assert stat.S_IMODE(wal.stat().st_mode) == DATABASE_FILE_MODE
+        assert_mode(wal, DATABASE_FILE_MODE)
 
     async def test_reopening_does_not_loosen_it(self, tmp_path: Path) -> None:
         path = tmp_path / "reopened.db"
@@ -308,7 +308,7 @@ class TestFileMode:
 
         second = Database(path)
         try:
-            assert stat.S_IMODE(path.stat().st_mode) == DATABASE_FILE_MODE
+            assert_mode(path, DATABASE_FILE_MODE)
         finally:
             await second.aclose()
 
@@ -316,7 +316,7 @@ class TestFileMode:
         # A world-readable directory says which files exist even when none can be read.
         database = Database(tmp_path / "fresh" / "keyring.db")
         try:
-            assert stat.S_IMODE((tmp_path / "fresh").stat().st_mode) == 0o700
+            assert_mode(tmp_path / "fresh", 0o700)
         finally:
             await database.aclose()
 
@@ -328,7 +328,7 @@ class TestFileMode:
 
         database = Database(existing / "keyring.db")
         try:
-            assert stat.S_IMODE(existing.stat().st_mode) == 0o755
+            assert_mode(existing, 0o755)
         finally:
             await database.aclose()
 
@@ -340,4 +340,4 @@ class TestFileMode:
 
         make_private(lonely)
 
-        assert stat.S_IMODE(lonely.stat().st_mode) == DATABASE_FILE_MODE
+        assert_mode(lonely, DATABASE_FILE_MODE)

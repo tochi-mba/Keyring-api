@@ -11,8 +11,12 @@ credential sets those people own), and connections (a profile's link to one thir
 service). Other services authenticate against it and ask for a *usable* credential at the
 moment they need one.
 
-It is not a library, and it is not part of another service. media-tool will call it over
-HTTP; that is the only relationship between them.
+It is not a library, and it is not part of another service. The rest of the family reaches
+it over HTTP only: every service verifies its signed tokens against its JWKS document, and
+the services that use third-party accounts also call `/v1/internal`.
+[docs/integration.md](docs/integration.md) is the page for them. The one piece of code
+this repository ships to other services is `clients/python/keyring_client`, the client
+they install to do both.
 
 The HTTP surface is designed to be fronted by an **MCP server** later, so an assistant can
 call it as tools. That is why route `operation_id`s and descriptions are treated as
@@ -203,7 +207,9 @@ A provider is data — no code changes.
 1. Add an entry to the JSON file at `KEYRING_OAUTH_PROVIDERS_PATH`. The schema is
    `OAuthProvider` in `credentials/providers.py`.
 2. `chmod 0600` the file. The loader refuses anything looser, because the file holds
-   client secrets.
+   client secrets. On native Windows there is no mode to check: the loader skips it, logs
+   `oauth_provider_file_mode_unchecked`, and the file's ACL is what protects it
+   (`docs/operations.md`).
 3. Register `KEYRING_OAUTH_REDIRECT_URI` with the provider, exactly.
 4. Ask for the fewest scopes that do the job. Granted scopes are recorded, not requested
    ones, so you will see what you actually got.
@@ -220,6 +226,10 @@ A provider is data — no code changes.
   parallelism without raising memory fails at startup rather than at the first login.
 - Tests use a deliberately cheap Argon2 cost. Production defaults take ~50ms per call
   **on purpose** — do not "optimise" them.
+- Assert a file mode with `assert_mode` from `tests/support/filemode.py`, never with
+  `stat.S_IMODE` directly. It is exact on POSIX and compares only the owner's bits on
+  Windows, where NTFS has no permission bits and every writable file reads 0666, so a
+  direct comparison fails natively there.
 
 ## Commit conventions
 

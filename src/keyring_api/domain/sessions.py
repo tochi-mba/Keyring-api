@@ -49,6 +49,8 @@ class Session:
     last_used_at: datetime
     expires_at: datetime
     absolute_expires_at: datetime
+    idle_ttl_seconds: float | None = None
+    """The idle TTL stamped at create. ``None`` on sessions that predate the stamp."""
 
     def is_expired(self, *, now: datetime) -> bool:
         """Whether either deadline has passed."""

@@ -61,7 +61,8 @@ ACCOUNT_COLUMNS = (
 )
 
 SESSION_COLUMNS = (
-    "session_id, account_id, token_hash, created_at, last_used_at, expires_at, absolute_expires_at"
+    "session_id, account_id, token_hash, created_at, last_used_at, expires_at, "
+    "absolute_expires_at, idle_ttl_seconds"
 )
 
 GRANT_COLUMNS = (
@@ -177,7 +178,7 @@ class SqlSessionStore:
 
     async def add(self, session: Session) -> None:
         await self._db.execute(
-            f"INSERT INTO sessions ({SESSION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)",  # noqa: S608
+            f"INSERT INTO sessions ({SESSION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",  # noqa: S608
             (
                 session.session_id,
                 session.account_id,
@@ -186,6 +187,7 @@ class SqlSessionStore:
                 to_column(session.last_used_at),
                 to_column(session.expires_at),
                 to_column(session.absolute_expires_at),
+                session.idle_ttl_seconds,
             ),
         )
 
@@ -250,7 +252,7 @@ class SqlSessionStore:
 
         def write(connection: sqlite3.Connection) -> int:
             connection.execute(
-                f"INSERT INTO sessions ({SESSION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)",  # noqa: S608
+                f"INSERT INTO sessions ({SESSION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",  # noqa: S608
                 (
                     session.session_id,
                     session.account_id,
@@ -259,6 +261,7 @@ class SqlSessionStore:
                     to_column(session.last_used_at),
                     to_column(session.expires_at),
                     to_column(session.absolute_expires_at),
+                    session.idle_ttl_seconds,
                 ),
             )
             return connection.execute(
@@ -453,6 +456,7 @@ def _session_of(row: sqlite3.Row) -> Session:
         last_used_at=from_column(row["last_used_at"]),
         expires_at=from_column(row["expires_at"]),
         absolute_expires_at=from_column(row["absolute_expires_at"]),
+        idle_ttl_seconds=row["idle_ttl_seconds"],
     )
 
 

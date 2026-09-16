@@ -31,7 +31,8 @@ EMAIL = "person@example.com"
 PASSWORD = "correct horse battery staple"
 MASTER_KEY = base64.b64encode(bytes(range(32))).decode()
 SERVICE_NAME = "media-tool"
-SERVICE_TOKEN = "test-service-token"
+SERVICE_TOKEN = "media-tool-service-token-0123456789abcdef"
+"""At least 32 characters, because configuration refuses anything shorter."""
 
 
 def build_settings(tmp_path: Path, **overrides: Any) -> Settings:

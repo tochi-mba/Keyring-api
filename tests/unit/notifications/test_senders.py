@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import smtplib
 import ssl
-import stat
 from email.message import EmailMessage as MimeMessage
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -24,6 +23,7 @@ from keyring_api.notifications.senders import (
     SmtpEmailSender,
     build_sender,
 )
+from tests.support.filemode import assert_mode
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -103,7 +103,7 @@ class TestFile:
 
         written = list((tmp_path / "outbox").iterdir())
         assert len(written) == 1
-        assert "the-live-token" in written[0].read_text()
+        assert "the-live-token" in written[0].read_text(encoding="utf-8")
 
     async def test_the_written_file_is_owner_only(
         self, sender: FileEmailSender, tmp_path: Path
@@ -112,8 +112,8 @@ class TestFile:
         await sender.send(MESSAGE)
 
         written = next((tmp_path / "outbox").iterdir())
-        assert stat.S_IMODE(written.stat().st_mode) == 0o600
-        assert stat.S_IMODE((tmp_path / "outbox").stat().st_mode) == 0o700
+        assert_mode(written, 0o600)
+        assert_mode(tmp_path / "outbox", 0o700)
 
     async def test_messages_do_not_overwrite_each_other(
         self, sender: FileEmailSender, tmp_path: Path

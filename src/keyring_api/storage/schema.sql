@@ -103,5 +103,5 @@ CREATE TABLE sessions (
     last_used_at        TEXT NOT NULL,
     expires_at          TEXT NOT NULL,
     absolute_expires_at TEXT NOT NULL
-) STRICT;
+, idle_ttl_seconds INTEGER) STRICT;
 CREATE TABLE sqlite_sequence(name,seq);

@@ -35,7 +35,7 @@ async def dump() -> str:
 
 
 def main() -> None:
-    SNAPSHOT.write_text(asyncio.run(dump()))
+    SNAPSHOT.write_text(asyncio.run(dump()), encoding="utf-8", newline="\n")
     print(f"wrote {SNAPSHOT}")
 
 

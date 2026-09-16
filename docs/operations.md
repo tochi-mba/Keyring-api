@@ -62,6 +62,14 @@ and nothing in the logs saying so. See `.env.example` for the full list.
 The OAuth provider file must be mode 0600; the loader refuses anything looser, because it
 holds client secrets.
 
+That check is POSIX-only. Run natively on Windows there is no mode to read -- NTFS keeps no
+permission bits, `chmod` only toggles the read-only flag, and every writable file reports
+0666 -- so rather than refuse every file, the loader skips the comparison and logs a
+`oauth_provider_file_mode_unchecked` warning carrying the file's path each time it loads
+it. Who can read the file there is decided by its ACL, which it inherits from its
+directory: keep it somewhere only the account running keyring can read, such as under that
+account's profile.
+
 ## Onboarding somebody
 
 There is no public registration ([ADR-0009](adr/0009-invite-only.md)). The **first account
@@ -210,7 +218,10 @@ outside the service, and adding one would be adding a way.
 
 ## Watching it
 
-`GET /healthy` needs no authentication and reports counts only — never an address, a
+`GET /healthy` says only that the process is running: no I/O, and it never fails, so an
+orchestrator does not restart a working container during somebody else's outage.
+
+`GET /ready` needs no authentication and reports counts only — never an address, a
 profile name, or which service someone has connected. It goes **503** when:
 
 - the vault is sealed (no master key), or
@@ -218,6 +229,11 @@ profile name, or which service someone has connected. It goes **503** when:
 
 That second check is the one that earns its place: an expired grant shows up here, with
 the fix, rather than as a job failing mysteriously hours later.
+
+**It is not a readiness probe for other services.** One person's expired grant is enough
+to make it 503, so a consumer whose readiness check pointed here would take itself out of
+rotation for a problem it does not have. Consumers report their own readiness from the
+signing keys they have cached instead; see [integration.md](integration.md#readiness).
 
 Log records are JSON with a `request_id` on every line and an `account_id` on every
 authenticated one. Values whose field name looks like a secret are redacted before

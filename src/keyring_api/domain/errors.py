@@ -171,3 +171,13 @@ class RateLimitedError(DomainError):
     def __init__(self, message: str, *, retry_after_seconds: float) -> None:
         super().__init__(message)
         self.retry_after_seconds = retry_after_seconds
+
+
+class PreferencesUnavailableError(DomainError):
+    """A person's settings were needed and could not be read honestly.
+
+    settings-api refused this service -- a grant it was not given, a token it does not
+    recognise. That is a misconfiguration of this deployment, not an outage, and not the
+    caller's doing, so it is not a 4xx. An outage of settings-api itself does not raise
+    this: session lifetimes fall back to the configuration rather than failing login.
+    """

@@ -263,6 +263,14 @@ class TestSessionStore:
 
         assert await store.get_by_token_hash("abc") == session
 
+    async def test_the_idle_ttl_stamped_at_create_round_trips(self, store: SqlSessionStore) -> None:
+        session = make_session("acct_1", token_hash="abc", idle_ttl_seconds=120)
+        await store.add(session)
+        stored = await store.get_by_token_hash("abc")
+
+        assert stored is not None
+        assert stored.idle_ttl_seconds == 120
+
     async def test_an_unknown_token_finds_nothing(self, store: SqlSessionStore) -> None:
         assert await store.get_by_token_hash("nope") is None
 

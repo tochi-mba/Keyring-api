@@ -163,7 +163,7 @@ class TestSchemaSnapshot:
     """
 
     async def test_it_matches_the_checked_in_snapshot(self, database: Database) -> None:
-        snapshot = (MIGRATIONS_DIR.parent / "schema.sql").read_text()
+        snapshot = (MIGRATIONS_DIR.parent / "schema.sql").read_text(encoding="utf-8")
 
         assert await dump_schema(database) == snapshot
 

@@ -7,7 +7,7 @@ settings, and nothing is constructed as a side effect of importing this module.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 
@@ -37,12 +37,13 @@ exist, and whether each one is currently usable.
 """.strip()
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, settings_client: Any = None) -> FastAPI:
     """Build the application.
 
     Args:
         settings: configuration to use. Loaded from the environment when omitted, which
             is what the server entry point does; tests pass their own.
+        settings_client: substituted by tests with a fake settings-api client.
     """
     settings = settings or load_settings()
     configure_logging(level=settings.log_level, log_format=settings.log_format)
@@ -76,6 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ],
     )
     app.state.settings = settings
+    app.state.settings_client = settings_client
 
     app.add_middleware(RequestContextMiddleware)
     register_exception_handlers(app)
@@ -98,7 +100,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def start(app: FastAPI) -> Container:
     """Wire the application's dependencies and begin background retention."""
-    container = Container.build(app.state.settings)
+    container = Container.build(app.state.settings, settings_client=app.state.settings_client)
     app.state.container = container
     container.start_sweeper()
 

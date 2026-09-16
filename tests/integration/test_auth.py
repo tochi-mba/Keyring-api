@@ -463,6 +463,7 @@ class TestContract:
         assert operation_ids == {
             # health and keys
             "get_health",
+            "check_readiness",
             "get_jwks",
             # authentication
             "login",

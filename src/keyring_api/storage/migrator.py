@@ -89,7 +89,12 @@ def migrate(database: Database, *, now: datetime, directory: Path = MIGRATIONS_D
 
     for migration in pending:
         database.run_sync(
-            partial(_apply, migration=migration, script=migration.path.read_text(), now=now)
+            partial(
+                _apply,
+                migration=migration,
+                script=migration.path.read_text(encoding="utf-8"),
+                now=now,
+            )
         )
         logger.info("migration_applied", version=migration.version, name=migration.name)
 

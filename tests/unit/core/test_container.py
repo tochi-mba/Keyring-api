@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from keyring_api.core.container import Container
+from keyring_api.core.preferences import DeploymentPreferences
+from settings_client.testing import FakeSettingsClient
 from tests.fakes.clock import FakeClock
 
 if TYPE_CHECKING:
@@ -29,6 +31,7 @@ async def container(settings: Settings) -> AsyncIterator[Container]:
 def test_it_wires_every_dependency(container: Container) -> None:
     assert container.account_service is not None
     assert container.accounts is not None
+    assert isinstance(container.preferences, DeploymentPreferences)
 
 
 async def test_uptime_starts_at_zero_and_advances_with_the_clock(settings: Settings) -> None:
@@ -128,3 +131,25 @@ async def test_a_sweep_with_nothing_to_do_is_silent(container: Container) -> Non
     await container._sweep_guarded()
 
     assert await container.sessions.purge_expired() == 0
+
+
+async def test_a_substituted_settings_client_is_closed_with_the_container(
+    settings: Settings,
+) -> None:
+    client = FakeSettingsClient()
+    closed = False
+    original = client.aclose
+
+    async def mark() -> None:
+        nonlocal closed
+        closed = True
+        await original()
+
+    client.aclose = mark  # type: ignore[method-assign]
+    container = Container.build(settings, settings_client=client)
+    try:
+        assert not isinstance(container.preferences, DeploymentPreferences)
+    finally:
+        await container.aclose()
+
+    assert closed

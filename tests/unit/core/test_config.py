@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import base64
 import re
+from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from keyring_api.core.config import (
+    ENV_PREFIX,
+    MIN_SERVICE_TOKEN_CHARS,
+    ConfigurationError,
     LogFormat,
     Settings,
     UnknownSettingError,
@@ -17,6 +21,11 @@ from keyring_api.core.config import (
     known_env_names,
     load_settings,
 )
+
+REPOSITORY = Path(__file__).resolve().parents[3]
+
+MEDIA_TOKEN = "media-tool-service-token-0123456789abcdef"
+SPOTIFY_TOKEN = "spotify-api-service-token-0123456789abcdef"
 
 
 def build(**overrides: Any) -> Settings:
@@ -38,6 +47,22 @@ class TestDefaults:
         # account is invited by an administrator, which removes open-signup abuse and
         # the account-enumeration surface that comes with a public registration form.
         assert not hasattr(build(), "allow_open_signup")
+
+    def test_the_default_issuer_is_the_one_every_sibling_service_pins_locally(self) -> None:
+        # A family started on a laptop must agree about who signed a token without anybody
+        # setting anything. The siblings default to keyring's own loopback address.
+        assert build().issuer == "http://127.0.0.1:8001"
+
+
+class TestTheExampleFile:
+    def test_every_line_in_env_example_is_a_setting_that_exists(self) -> None:
+        # Copying .env.example to .env is the first thing a new engineer does. A line
+        # naming a setting that no longer exists turned that into a startup error once,
+        # and nothing in the build noticed.
+        settings = Settings(_env_file=REPOSITORY / ".env.example")  # type: ignore[call-arg]
+
+        assert settings.port == 8001
+        assert settings.issuer == build().issuer
 
 
 class TestEnvironment:
@@ -80,6 +105,20 @@ class TestEnvironment:
         assert "KEYRING_RATE_LIMIT__LOGIN_ATTEMPTS" in known
         assert "KEYRING_PORT" in known
 
+    def test_a_rejected_setting_is_reported_without_its_value(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # pydantic renders the input beside each failure, and a startup crash is logged
+        # verbatim -- which for the master key would put the vault key in the log.
+        monkeypatch.setenv("KEYRING_MASTER_KEY", "not-base64-but-still-secret-material")
+
+        with pytest.raises(ConfigurationError) as caught:
+            load_settings()
+
+        assert "master_key" in str(caught.value)
+        assert "secret-material" not in str(caught.value)
+        assert caught.value.__cause__ is None
+
 
 class TestMasterKey:
     def test_a_valid_key_decodes_to_thirty_two_bytes(self) -> None:
@@ -110,6 +149,37 @@ class TestMasterKey:
         settings = build(master_key=base64.b64encode(bytes(32)).decode())
 
         assert "AAAA" not in repr(settings)
+
+
+class TestServiceTokens:
+    def test_long_distinct_tokens_are_accepted(self) -> None:
+        settings = build(service_tokens={"media-tool": MEDIA_TOKEN, "spotify-api": SPOTIFY_TOKEN})
+
+        assert set(settings.service_tokens) == {"media-tool", "spotify-api"}
+
+    @pytest.mark.parametrize(
+        "token",
+        ["change-me", MEDIA_TOKEN + "\n", " " + MEDIA_TOKEN],
+        ids=["a-placeholder", "a-pasted-newline", "leading-space"],
+    )
+    def test_a_token_that_is_short_or_untrimmed_is_refused_at_startup(self, token: str) -> None:
+        # A service token is the entire proof that a caller on /v1/internal is a service,
+        # and a pasted placeholder looks exactly like a working configuration.
+        with pytest.raises(ValidationError, match=f"at least {MIN_SERVICE_TOKEN_CHARS}"):
+            build(service_tokens={"media-tool": token})
+
+    def test_two_services_sharing_a_token_is_refused(self) -> None:
+        # Whichever name matched would decide which audience a user token must carry, so
+        # the weaker service could present the stronger one's tokens.
+        with pytest.raises(ValidationError, match="share a service token"):
+            build(service_tokens={"media-tool": MEDIA_TOKEN, "spotify-api": MEDIA_TOKEN})
+
+    def test_the_minimum_is_the_one_consuming_services_check_against(self) -> None:
+        # Keyring refusing a token its consumers would accept, or the reverse, is a
+        # deployment that works on one side of the boundary only.
+        from keyring_client import MIN_SERVICE_TOKEN_CHARS as CLIENT_MINIMUM
+
+        assert MIN_SERVICE_TOKEN_CHARS == CLIENT_MINIMUM
 
 
 class TestValidation:
@@ -149,3 +219,75 @@ class TestArgon2Parameters:
 
     def test_the_defaults_satisfy_their_own_constraint(self) -> None:
         assert build().argon2.memory_cost_kib >= 8 * build().argon2.parallelism
+
+
+SETTINGS_API_TOKEN = "settings-api-token-for-keyring-tests-01"
+SETTINGS_API_URL = "http://127.0.0.1:8003"
+
+
+class TestSettingsApi:
+    """Per-person settings are off unless configured, and configured whole or not at all."""
+
+    def test_it_is_off_unless_configured(self) -> None:
+        assert build().settings_api is None
+
+    def test_a_base_url_and_a_token_together_turn_it_on(self) -> None:
+        settings = build(
+            settings_api_base_url=SETTINGS_API_URL, settings_api_token=SETTINGS_API_TOKEN
+        )
+
+        assert settings.settings_api is not None
+        base_url, token = settings.settings_api
+        assert base_url == SETTINGS_API_URL
+        assert token.get_secret_value() == SETTINGS_API_TOKEN
+
+    @pytest.mark.parametrize(
+        "half",
+        [
+            {"settings_api_base_url": SETTINGS_API_URL},
+            {"settings_api_token": SETTINGS_API_TOKEN},
+        ],
+    )
+    def test_half_a_configuration_refuses_to_start(self, half: dict[str, str]) -> None:
+        with pytest.raises(ValidationError, match="set together"):
+            build(**half)
+
+    def test_a_blank_base_url_means_off(self) -> None:
+        assert build(settings_api_base_url="").settings_api_base_url is None
+
+    def test_a_blank_token_means_off(self) -> None:
+        assert build(settings_api_token="").settings_api_token is None
+        assert build(settings_api_token=SecretStr("")).settings_api_token is None
+
+    def test_a_short_token_is_refused_without_being_echoed(self) -> None:
+        with pytest.raises(ValidationError) as caught:
+            build(settings_api_base_url=SETTINGS_API_URL, settings_api_token="short-token")
+
+        messages = [error["msg"] for error in caught.value.errors()]
+        assert messages
+        assert all("short-token" not in message for message in messages)
+        assert any("32" in message for message in messages)
+
+    def test_a_token_with_surrounding_whitespace_is_refused_without_being_echoed(self) -> None:
+        padded = f" {SETTINGS_API_TOKEN}"
+        with pytest.raises(ValidationError) as caught:
+            build(settings_api_base_url=SETTINGS_API_URL, settings_api_token=padded)
+
+        messages = [error["msg"] for error in caught.value.errors()]
+        assert messages
+        assert all(SETTINGS_API_TOKEN not in message for message in messages)
+        assert all(padded not in message for message in messages)
+
+    def test_the_token_does_not_render_itself(self) -> None:
+        settings = build(
+            settings_api_base_url=SETTINGS_API_URL, settings_api_token=SETTINGS_API_TOKEN
+        )
+
+        assert SETTINGS_API_TOKEN not in repr(settings)
+        assert SETTINGS_API_TOKEN not in str(settings)
+
+    def test_the_prefixed_names_are_recognised(self) -> None:
+        names = known_env_names()
+
+        assert f"{ENV_PREFIX}SETTINGS_API_BASE_URL" in names
+        assert f"{ENV_PREFIX}SETTINGS_API_TOKEN" in names

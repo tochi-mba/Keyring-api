@@ -21,6 +21,8 @@ WORKDIR /app
 # comparison on its internal surface, so it is a dependency like any other.
 COPY pyproject.toml uv.lock README.md ./
 COPY clients/python/ clients/python/
+# git: uv fetches the family's client packages from tagged git sources.
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN uv sync --no-install-project --no-dev
 
 COPY src/ src/

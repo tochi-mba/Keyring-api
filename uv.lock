@@ -837,7 +837,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.5" },
     { name = "pyjwt", specifier = ">=2.9" },
-    { name = "settings-client", editable = "../Settings-api/clients/python" },
+    { name = "settings-client", git = "https://github.com/tochi-mba/Settings-api?subdirectory=clients%2Fpython&tag=settings-client-v0.1.0" },
     { name = "structlog", specifier = ">=24.4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
@@ -1413,13 +1413,10 @@ wheels = [
 [[package]]
 name = "settings-client"
 version = "0.1.0"
-source = { editable = "../Settings-api/clients/python" }
+source = { git = "https://github.com/tochi-mba/Settings-api?subdirectory=clients%2Fpython&tag=settings-client-v0.1.0#cc5f1ed906206860bc994d1e9225585494088790" }
 dependencies = [
     { name = "httpx" },
 ]
-
-[package.metadata]
-requires-dist = [{ name = "httpx", specifier = ">=0.27" }]
 
 [[package]]
 name = "sniffio"

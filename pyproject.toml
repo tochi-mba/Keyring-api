@@ -293,4 +293,4 @@ members = [
 
 [tool.uv.sources]
 keyring-client = { workspace = true, editable = true }
-settings-client = { path = "../Settings-api/clients/python", editable = true }
+settings-client = { git = "https://github.com/tochi-mba/Settings-api", subdirectory = "clients/python", tag = "settings-client-v0.1.0" }

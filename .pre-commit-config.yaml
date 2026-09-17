@@ -1,7 +1,7 @@
 # Fast local gate. `make check` remains the authority -- these hooks are a subset
 # chosen to run in under a second on a staged diff.
 default_language_version:
-  python: python3.11
+  python: python3.12
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks

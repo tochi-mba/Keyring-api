@@ -3,15 +3,15 @@ name = "keyring-api"
 version = "0.1.0"
 description = "Accounts, profiles and credentials: the vault every other service authenticates against."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "tochi-mba" }]
 keywords = ["fastapi", "credentials", "oauth2", "accounts", "mcp"]
 classifiers = [
     "Private :: Do Not Upload",
     "Framework :: FastAPI",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
 ]
 dependencies = [
@@ -58,7 +58,7 @@ packages = ["src/keyring_api"]
 # --------------------------------------------------------------------------------------
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 # The client is a separate distribution that lives in this repository, because keyring
 # owns the contract it implements. It is linted, typed and covered as part of this gate.
 src = ["src", "tests", "clients/python"]
@@ -144,7 +144,7 @@ convention = "google"
 # Types
 # --------------------------------------------------------------------------------------
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 files = ["src", "tests", "clients/python"]
 mypy_path = "clients/python"
 strict = true

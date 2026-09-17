@@ -3,7 +3,7 @@
 # A plain slim base, not a browser image: this service makes outbound HTTPS calls and
 # writes small files, and nothing else. The smaller the process holding the credentials,
 # the less there is in it to go wrong.
-FROM python:3.11-slim-bookworm
+FROM python:3.12-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

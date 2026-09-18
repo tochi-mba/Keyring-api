@@ -49,6 +49,9 @@ class AuditAction(StrEnum):
     ROLE_UPDATED = "role.updated"
     ROLE_DELETED = "role.deleted"
     PROFILE_DELETED_BY_ADMIN = "profile.deleted_by_admin"
+    DELEGATION_CREATED = "delegation.created"
+    DELEGATION_REVOKED = "delegation.revoked"
+    TOKEN_EXCHANGED = "delegation.token_exchanged"  # noqa: S105 -- an event name
 
 
 @dataclass(frozen=True, slots=True)

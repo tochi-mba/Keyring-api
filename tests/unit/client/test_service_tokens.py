@@ -17,18 +17,20 @@ from keyring_client import (
 if TYPE_CHECKING:
     from tests.unit.client.conftest import RecordingLogger
 
-MEDIA = "media-tool-service-token-0123456789abcdef"
+DOWNSTREAM = "downstream-tool-service-token-0123456789abcdef"
 SPOTIFY = "spotify-api-service-token-0123456789abcdef"
 
 
 @pytest.fixture
 def services(recorder: RecordingLogger) -> ServiceAuthenticator:
-    return ServiceAuthenticator({"media-tool": MEDIA, "spotify-api": SPOTIFY}, logger=recorder)
+    return ServiceAuthenticator(
+        {"downstream-tool": DOWNSTREAM, "spotify-api": SPOTIFY}, logger=recorder
+    )
 
 
 class TestCheckingATokenAtStartup:
     def test_a_long_enough_token_is_accepted_as_it_is(self) -> None:
-        assert check_service_token(MEDIA) == MEDIA
+        assert check_service_token(DOWNSTREAM) == DOWNSTREAM
 
     def test_a_placeholder_is_refused(self) -> None:
         # A deployment that pasted "change-me" looks exactly like a working one until the
@@ -39,27 +41,27 @@ class TestCheckingATokenAtStartup:
     def test_surrounding_whitespace_is_refused(self) -> None:
         # A token copied with its newline matches nothing, and every call is a 401.
         with pytest.raises(ValueError, match="whitespace"):
-            check_service_token(MEDIA + "\n")
+            check_service_token(DOWNSTREAM + "\n")
 
 
 class TestBuildingTheAuthenticator:
     def test_a_short_token_is_refused_when_the_authenticator_is_built(self) -> None:
         with pytest.raises(ValueError, match="at least"):
-            ServiceAuthenticator({"media-tool": "short"})
+            ServiceAuthenticator({"downstream-tool": "short"})
 
     def test_two_services_sharing_a_token_is_refused(self) -> None:
         # Whichever name matched first would decide the grant, so the weaker grant would be
         # reachable with the other's token.
         with pytest.raises(ValueError, match="share a service token"):
-            ServiceAuthenticator({"media-tool": MEDIA, "spotify-api": MEDIA})
+            ServiceAuthenticator({"downstream-tool": DOWNSTREAM, "spotify-api": DOWNSTREAM})
 
     def test_the_configured_names_are_listed_sorted_and_without_their_tokens(
         self, services: ServiceAuthenticator
     ) -> None:
-        assert services.configured == ("media-tool", "spotify-api")
+        assert services.configured == ("downstream-tool", "spotify-api")
 
     def test_a_default_logger_is_used_when_none_is_given(self) -> None:
-        plain = ServiceAuthenticator({"media-tool": MEDIA})
+        plain = ServiceAuthenticator({"downstream-tool": DOWNSTREAM})
 
         with pytest.raises(AuthenticationError):
             plain.identify("nope")
@@ -67,7 +69,7 @@ class TestBuildingTheAuthenticator:
 
 class TestIdentifying:
     def test_each_token_identifies_its_own_service(self, services: ServiceAuthenticator) -> None:
-        assert services.identify(MEDIA) == "media-tool"
+        assert services.identify(DOWNSTREAM) == "downstream-tool"
         assert services.identify(SPOTIFY) == "spotify-api"
 
     @pytest.mark.parametrize("presented", [None, "", "not-a-configured-token", "ünïcödé"])
@@ -93,9 +95,11 @@ class TestIdentifying:
 
 class TestTheAuthorizationHeader:
     def test_a_bearer_header_identifies_its_service(self, services: ServiceAuthenticator) -> None:
-        assert services.identify_authorization(f"Bearer {MEDIA}") == "media-tool"
+        assert services.identify_authorization(f"Bearer {DOWNSTREAM}") == "downstream-tool"
 
-    @pytest.mark.parametrize("header", [None, MEDIA, f"Basic {MEDIA}", f"bearer {MEDIA}"])
+    @pytest.mark.parametrize(
+        "header", [None, DOWNSTREAM, f"Basic {DOWNSTREAM}", f"bearer {DOWNSTREAM}"]
+    )
     def test_a_missing_header_or_another_scheme_is_refused(
         self, services: ServiceAuthenticator, header: str | None
     ) -> None:

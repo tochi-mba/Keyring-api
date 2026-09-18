@@ -149,14 +149,16 @@ class TestTheInternalSurface:
         assert response.status_code == 401
 
     async def test_explicit_service_tokens_replace_the_default_service(self) -> None:
-        keyring = FakeKeyring(service_tokens={"media-tool": "media-tool-token-0123456789abcdef"})
+        keyring = FakeKeyring(
+            service_tokens={"downstream-tool": "downstream-tool-token-0123456789abcdef"}
+        )
         async with httpx.AsyncClient(transport=keyring.transport(), base_url=BASE_URL) as http:
             response = await http.get(
                 f"{CREDENTIALS_PATH}/personal/tmdb", headers=internal(keyring.mint())
             )
 
         assert response.status_code == 401
-        assert set(keyring.service_tokens) == {"media-tool"}
+        assert set(keyring.service_tokens) == {"downstream-tool"}
 
     async def test_form_secrets_that_were_never_stored_are_not_found(
         self, keyring: FakeKeyring, http: httpx.AsyncClient

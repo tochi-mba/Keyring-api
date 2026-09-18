@@ -488,6 +488,13 @@ class TestContract:
             # service-to-service
             "resolve_credential",
             "resolve_form_secrets",
+            "exchange_user_token",
+            "create_offline_grant",
+            "list_offline_grants",
+            "revoke_offline_grant",
+            "describe_delegated_profile",
+            "authorize_delegated_connection",
+            "delete_delegated_connection",
             # administration
             "issue_invite",
             "delete_account",

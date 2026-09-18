@@ -1,7 +1,7 @@
 """Short-lived signed tokens, and the public keys that verify them.
 
 A person authenticates to keyring with an opaque session token. Another *service* --
-media-tool, say -- needs to know who a request is for without asking keyring on every
+example-tool, say -- needs to know who a request is for without asking keyring on every
 request, so keyring mints a short-lived signed token and publishes its public key at a
 JWKS endpoint. The consuming service verifies locally.
 
@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from datetime import timedelta
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import jwt
@@ -54,6 +55,14 @@ TOKEN_TYPE = "Bearer"  # noqa: S105 -- the scheme name, not a credential
 
 BAD_TOKEN = "the token was not accepted"  # noqa: S105 -- a message, not a credential
 """One message for every verification failure. Which one it was is nobody's business."""
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedAccessToken:
+    """Only verified claims may decide an exchange's identity or lifetime."""
+
+    account_id: str
+    expires_at: datetime
 
 
 class TokenSigner:
@@ -88,6 +97,10 @@ class TokenSigner:
         )
 
     def verify(self, token: str, *, audience: str) -> str:
+        """Verify a token and return its account id."""
+        return self.verify_access(token, audience=audience).account_id
+
+    def verify_access(self, token: str, *, audience: str) -> VerifiedAccessToken:
         """Check a token this service issued and return its subject.
 
         Present so keyring can authenticate a token it minted when a service presents
@@ -123,6 +136,7 @@ class TokenSigner:
                     # the wall clock, which breaks the codebase invariant and makes the
                     # expiry rule untestable without waiting.
                     "verify_exp": False,
+                    "strict_aud": True,
                 },
             )
         except jwt.InvalidTokenError as exc:
@@ -132,7 +146,7 @@ class TokenSigner:
             raise AuthenticationError(BAD_TOKEN)
 
         subject: str = claims["sub"]
-        return subject
+        return VerifiedAccessToken(subject, datetime.fromtimestamp(float(claims["exp"]), UTC))
 
     def jwks(self) -> dict[str, Any]:
         """The public key, in the form a verifying service expects.

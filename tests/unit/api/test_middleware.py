@@ -47,7 +47,7 @@ async def test_every_response_reports_how_long_it_took(client: AsyncClient) -> N
 
 
 async def test_a_caller_supplied_request_id_is_honoured(client: AsyncClient) -> None:
-    # So a trace can span services -- media-tool's request id and keyring's match.
+    # So a trace can span services -- downstream-tool's request id and keyring's match.
     response = await client.get("/healthy", headers={REQUEST_ID_HEADER: "from-upstream"})
 
     assert response.headers[REQUEST_ID_HEADER] == "from-upstream"

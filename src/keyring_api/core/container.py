@@ -28,12 +28,14 @@ from keyring_api.audit.sql_log import SqlAuditLog
 from keyring_api.core.clock import SystemClock
 from keyring_api.core.logging import get_logger
 from keyring_api.core.preferences import build_preference_source
+from keyring_api.credentials.delegation import DelegationService
 from keyring_api.credentials.oauth_client import HttpTokenEndpoint
 from keyring_api.credentials.providers import load_providers
 from keyring_api.credentials.service import CredentialService
 from keyring_api.credentials.state import InMemoryOAuthStateStore
 from keyring_api.notifications.outbox import Outbox
 from keyring_api.notifications.senders import build_sender
+from keyring_api.profiles.sql_delegations import SqlDelegationStore
 from keyring_api.profiles.sql_store import SqlProfileStore
 from keyring_api.secrets.sql import SqlSecretStore
 from keyring_api.storage.database import Database
@@ -78,6 +80,7 @@ class Container:
     audit: AuditLog
     account_service: AccountService
     credential_service: CredentialService
+    delegation_service: DelegationService
     admin_service: AdminService
     signer: TokenSigner
     tokens: HttpTokenEndpoint
@@ -182,6 +185,15 @@ class Container:
             audit=audit,
             account_service=account_service,
             credential_service=credential_service,
+            delegation_service=DelegationService(
+                store=SqlDelegationStore(database),
+                profiles=profiles,
+                accounts=accounts,
+                signer=signer,
+                audit=audit,
+                settings=settings,
+                clock=clock,
+            ),
             admin_service=AdminService(
                 accounts=accounts,
                 roles=roles,

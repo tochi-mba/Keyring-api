@@ -1,6 +1,7 @@
 CREATE INDEX account_roles_by_role ON account_roles(role_name);
 CREATE INDEX audit_by_actor ON audit(actor_id, sequence);
 CREATE INDEX grants_by_account ON grants(account_id);
+CREATE INDEX offline_grants_owner ON offline_grants(account_id, profile, created_at, grant_id);
 CREATE INDEX sessions_by_account ON sessions(account_id, created_at);
 CREATE TABLE account_roles (
     account_id TEXT    NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
@@ -60,6 +61,17 @@ CREATE TABLE grants (
     -- Mirrors Grant.__post_init__. A grant that names neither an address nor an account
     -- authorises nothing and can never be matched to anybody.
     CHECK (email IS NOT NULL OR account_id IS NOT NULL)
+) STRICT;
+CREATE TABLE offline_grants (
+    grant_id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    profile TEXT NOT NULL,
+    service TEXT NOT NULL,
+    audiences TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT,
+    FOREIGN KEY (account_id, profile) REFERENCES profiles(account_id, name) ON DELETE CASCADE
 ) STRICT;
 CREATE TABLE profiles (
     account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,

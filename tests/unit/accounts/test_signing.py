@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 ISSUER = "https://keyring.test"
-AUDIENCE = "media-tool"
+AUDIENCE = "downstream-tool"
 
 
 @pytest.fixture
@@ -156,7 +156,7 @@ class TestVerification:
     def test_a_token_for_a_different_audience_is_refused(self, signer: TokenSigner) -> None:
         # Otherwise a token minted for one service is usable at every other service that
         # trusts this issuer.
-        token = signer.issue(account_id="acct_1", audience="media-tool", ttl_seconds=900)
+        token = signer.issue(account_id="acct_1", audience="downstream-tool", ttl_seconds=900)
 
         with pytest.raises(AuthenticationError):
             signer.verify(token, audience="some-other-service")

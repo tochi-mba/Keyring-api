@@ -11,7 +11,7 @@ They never import keyring's application or database modules.
 | Settings-api | `settings` or `settings.<namespace>` | No |
 | User-api | `user` or `user.<scope>` | No |
 | Persona-api | `persona` or `persona.<scope>` | No |
-| Media-tool | `media-tool` | Yes |
+| Example-tool | `example-tool` | Yes |
 | Spotify-api | `spotify-api` | Yes |
 | Web-search-api | `web-search-api` | Yes |
 | Environments-api | `environments-api` | Yes |
@@ -26,7 +26,7 @@ verification and do not need a keyring service secret for that purpose.
 1. A person logs in at `POST /v1/auth/login` and receives a session token.
 2. They call `POST /v1/auth/service-token`, with the session in
    `Authorization: Bearer <session token>` and a body such as
-   `{"audience":"media-tool"}`.
+   `{"audience":"example-tool"}`.
 3. The consuming service verifies the resulting short-lived RS256 token against
    `/.well-known/jwks.json`, pinning its configured issuer and audience. The verified
    `sub` is the account id. A request body must never choose that id.
@@ -43,7 +43,7 @@ Use a JSON mapping, with a different randomly generated secret of at least 32
 characters per service:
 
 ```dotenv
-KEYRING_SERVICE_TOKENS='{"media-tool":"<generated media secret>","spotify-api":"<generated Spotify secret>"}'
+KEYRING_SERVICE_TOKENS='{"example-tool":"<generated example-tool secret>","spotify-api":"<generated Spotify secret>"}'
 ```
 
 The names are exact: a call authenticated as `spotify-api` must present a user token
@@ -51,7 +51,7 @@ with `aud = spotify-api`. If that service also calls Settings-api, its settings 
 `audience_prefix` must match that name so the same user token works with both hubs.
 The settings service secret is configured separately in Settings-api's grants.
 
-Do not use `KEYRING_SERVICE_TOKENS__MEDIA_TOOL`. The mapping is supplied as JSON.
+Do not use `KEYRING_SERVICE_TOKENS__EXAMPLE_TOOL`. The mapping is supplied as JSON.
 The example placeholders above must be replaced before deployment.
 
 ## Python client
@@ -73,7 +73,7 @@ from keyring_client import ExactAudience, JwksClient, SystemClock, TokenVerifier
 clock = SystemClock()
 jwks = JwksClient(url=jwks_url("http://127.0.0.1:8001"), clock=clock)
 verifier = TokenVerifier(jwks=jwks, issuer="http://127.0.0.1:8001", clock=clock)
-identity = await verifier.verify(user_token, audience=ExactAudience("media-tool"))
+identity = await verifier.verify(user_token, audience=ExactAudience("example-tool"))
 account_id = identity.account_id
 # At application shutdown:
 await jwks.aclose()

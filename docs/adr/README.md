@@ -5,7 +5,7 @@ decided, what it cost, and what would make us change our minds.
 
 | ADR | Decision |
 | --- | --- |
-| [0001](0001-separate-service.md) | keyring is its own service, not part of media-tool |
+| [0001](0001-separate-service.md) | keyring is its own service, not part of example-tool |
 | [0002](0002-credentials-only.md) | keyring stores credentials and nothing else |
 | [0003](0003-build-not-buy.md) | Build a small vault rather than self-host a platform |
 | [0004](0004-in-memory-stores.md) | In-memory stores for v1, behind ports *(superseded by 0012)* |

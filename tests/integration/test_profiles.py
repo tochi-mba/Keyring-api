@@ -59,9 +59,10 @@ class TestCreatingAProfile:
 
         assert response.status_code == 201
         body = response.json()
-        assert set(body) == {"name", "created_at", "updated_at", "connections"}
+        assert set(body) == {"name", "created_at", "updated_at", "connections", "grants"}
         assert body["name"] == "personal"
         assert body["connections"] == []
+        assert body["grants"] == []
 
     async def test_a_second_profile_of_the_same_name_conflicts(self, client: AsyncClient) -> None:
         token = await onboard(client)

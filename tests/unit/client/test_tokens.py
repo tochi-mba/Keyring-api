@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 
     from tests.unit.client.conftest import RecordingLogger
 
-SERVICE = "media-tool"
+SERVICE = "downstream-tool"
 EXACT = ExactAudience(SERVICE)
 OTHER_ISSUER = "https://keyring.other.test"
 LIFETIME = 900
@@ -134,12 +134,12 @@ class TestAudiencePolicies:
     def test_an_exact_audience_accepts_only_its_own_name(self) -> None:
         assert EXACT.accepts(SERVICE)
         assert not EXACT.accepts(f"{SERVICE}.jobs")
-        assert not EXACT.accepts("media-toolkit")
+        assert not EXACT.accepts("downstream-toolkit")
 
     def test_a_family_accepts_its_name_and_its_compartments_and_nothing_that_merely_starts_so(
         self,
     ) -> None:
-        # The separator is required: `media` must not accept `media-toolkit`.
+        # The separator is required: `downstream` must not accept `downstream-toolkit`.
         family = AudienceFamily("user")
 
         assert family.accepts("user")

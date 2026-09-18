@@ -24,7 +24,7 @@ from keyring_api.core.config import (
 
 REPOSITORY = Path(__file__).resolve().parents[3]
 
-MEDIA_TOKEN = "media-tool-service-token-0123456789abcdef"
+DOWNSTREAM_TOKEN = "downstream-tool-service-token-0123456789abcdef"
 SPOTIFY_TOKEN = "spotify-api-service-token-0123456789abcdef"
 
 
@@ -153,26 +153,33 @@ class TestMasterKey:
 
 class TestServiceTokens:
     def test_long_distinct_tokens_are_accepted(self) -> None:
-        settings = build(service_tokens={"media-tool": MEDIA_TOKEN, "spotify-api": SPOTIFY_TOKEN})
+        settings = build(
+            service_tokens={"downstream-tool": DOWNSTREAM_TOKEN, "spotify-api": SPOTIFY_TOKEN}
+        )
 
-        assert set(settings.service_tokens) == {"media-tool", "spotify-api"}
+        assert set(settings.service_tokens) == {"downstream-tool", "spotify-api"}
 
     @pytest.mark.parametrize(
         "token",
-        ["change-me", MEDIA_TOKEN + "\n", " " + MEDIA_TOKEN],
+        ["change-me", DOWNSTREAM_TOKEN + "\n", " " + DOWNSTREAM_TOKEN],
         ids=["a-placeholder", "a-pasted-newline", "leading-space"],
     )
     def test_a_token_that_is_short_or_untrimmed_is_refused_at_startup(self, token: str) -> None:
         # A service token is the entire proof that a caller on /v1/internal is a service,
         # and a pasted placeholder looks exactly like a working configuration.
         with pytest.raises(ValidationError, match=f"at least {MIN_SERVICE_TOKEN_CHARS}"):
-            build(service_tokens={"media-tool": token})
+            build(service_tokens={"downstream-tool": token})
 
     def test_two_services_sharing_a_token_is_refused(self) -> None:
         # Whichever name matched would decide which audience a user token must carry, so
         # the weaker service could present the stronger one's tokens.
         with pytest.raises(ValidationError, match="share a service token"):
-            build(service_tokens={"media-tool": MEDIA_TOKEN, "spotify-api": MEDIA_TOKEN})
+            build(
+                service_tokens={
+                    "downstream-tool": DOWNSTREAM_TOKEN,
+                    "spotify-api": DOWNSTREAM_TOKEN,
+                }
+            )
 
     def test_the_minimum_is_the_one_consuming_services_check_against(self) -> None:
         # Keyring refusing a token its consumers would accept, or the reverse, is a
@@ -180,6 +187,37 @@ class TestServiceTokens:
         from keyring_client import MIN_SERVICE_TOKEN_CHARS as CLIENT_MINIMUM
 
         assert MIN_SERVICE_TOKEN_CHARS == CLIENT_MINIMUM
+
+
+class TestExchangeAudiences:
+    """An audience a service is not configured to mint for is a startup error, not a 403 later."""
+
+    def test_an_allowlist_for_a_configured_service_is_accepted(self) -> None:
+        settings = build(
+            service_tokens={"downstream-tool": DOWNSTREAM_TOKEN},
+            exchange_audiences={"downstream-tool": ("user.home", "user.work")},
+        )
+
+        assert settings.exchange_audiences == {"downstream-tool": ("user.home", "user.work")}
+
+    def test_an_allowlist_for_an_unconfigured_service_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="unconfigured service"):
+            build(
+                service_tokens={"downstream-tool": DOWNSTREAM_TOKEN},
+                exchange_audiences={"other-tool": ("user.home",)},
+            )
+
+    @pytest.mark.parametrize(
+        "audience",
+        ["", " user.home", "user.home ", "x" * 129],
+        ids=["empty", "leading-space", "trailing-space", "too-long"],
+    )
+    def test_an_audience_that_is_blank_padded_or_too_long_is_refused(self, audience: str) -> None:
+        with pytest.raises(ValidationError, match="nonempty exact names"):
+            build(
+                service_tokens={"downstream-tool": DOWNSTREAM_TOKEN},
+                exchange_audiences={"downstream-tool": (audience,)},
+            )
 
 
 class TestValidation:
@@ -204,7 +242,7 @@ class TestValidation:
             build(session_ttl_seconds=bad)
 
     def test_the_issuer_is_a_url_shaped_string_other_services_can_pin(self) -> None:
-        # media-tool verifies keyring's tokens by issuer; a bare hostname would not be
+        # downstream-tool verifies keyring's tokens by issuer; a bare hostname would not be
         # comparable across the two.
         assert re.match(r"^https?://", build().issuer)
 

@@ -8,7 +8,7 @@ it is actually running: a real process, real HTTP, real files on disk.
       'import base64,os; print(base64.b64encode(os.urandom(32)).decode())')"
     export KEYRING_ADMIN_TOKEN=break-glass-token-for-smoke-test
     export KEYRING_PORT=8099
-    export KEYRING_SERVICE_TOKENS='{"media-tool":"svc-token-for-the-smoke-test-0123456789"}'
+    export KEYRING_SERVICE_TOKENS='{"example-tool":"svc-token-for-the-smoke-test-0123456789"}'
     uv run keyring-api &
     python scripts/smoke.py
 
@@ -101,7 +101,7 @@ def main() -> int:
     _, profile = call("GET", "/v1/profiles/personal", None, bearer(owner))
     check("the key is absent from the read-back", API_KEY in json.dumps(profile), False)
 
-    _, minted = call("POST", "/v1/auth/service-token", {"audience": "media-tool"}, bearer(owner))
+    _, minted = call("POST", "/v1/auth/service-token", {"audience": "example-tool"}, bearer(owner))
     both = {**bearer(SERVICE), "X-Keyring-User-Token": minted["token"]}
     _, resolved = call("GET", "/v1/internal/credentials/personal/tmdb", None, both)
     check(

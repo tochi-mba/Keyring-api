@@ -12,6 +12,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from keyring_api.api.schemas.delegation import GrantResponse
 from keyring_api.domain.profiles import ConnectionStatus, CredentialKind
 
 
@@ -113,6 +114,9 @@ class ProfileResponse(BaseModel):
     updated_at: datetime = Field(description="When it or one of its connections last changed.")
     connections: list[ConnectionResponse] = Field(
         default_factory=list, description="Every service this profile is connected to."
+    )
+    grants: list[GrantResponse] = Field(
+        default_factory=list, description="Revocable background consent recorded for this profile."
     )
 
 

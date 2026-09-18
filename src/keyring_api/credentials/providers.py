@@ -1,6 +1,6 @@
 """OAuth provider configuration, loaded from a file rather than written in code.
 
-A new service is a config entry, not a code change. That is the same bet media-tool
+A new service is a config entry, not a code change. That is the same bet example-tool
 makes with site recipes, and for the same reason: the thing that varies between services
 is a handful of URLs and scopes, and putting them in code means a deployment cannot add
 a provider without a release.

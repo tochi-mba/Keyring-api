@@ -46,7 +46,7 @@ written yet.
   exactly the moment the service is coming back up.
 - The `kid` is derived from the key rather than random, so a consumer caching by `kid` gets
   a hit across restarts.
-- Tokens are audience-scoped: one minted for media-tool is rejected everywhere else, which
+- Tokens are audience-scoped: one minted for example-tool is rejected everywhere else, which
   matters because a service holds one for the length of a job.
 
 ## What would change our minds

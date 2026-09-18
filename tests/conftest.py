@@ -30,8 +30,8 @@ ADMIN_TOKEN = "test-admin-token"
 EMAIL = "person@example.com"
 PASSWORD = "correct horse battery staple"
 MASTER_KEY = base64.b64encode(bytes(range(32))).decode()
-SERVICE_NAME = "media-tool"
-SERVICE_TOKEN = "media-tool-service-token-0123456789abcdef"
+SERVICE_NAME = "downstream-tool"
+SERVICE_TOKEN = "downstream-tool-service-token-0123456789abcdef"
 """At least 32 characters, because configuration refuses anything shorter."""
 
 

@@ -225,7 +225,7 @@ class ServiceTokenRequest(BaseModel):
     """Ask for a token scoped to one other service."""
 
     model_config = ConfigDict(
-        extra="forbid", json_schema_extra={"examples": [{"audience": "media-tool"}]}
+        extra="forbid", json_schema_extra={"examples": [{"audience": "example-tool"}]}
     )
 
     audience: str = Field(

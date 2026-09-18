@@ -115,6 +115,12 @@ async def begin(client: AsyncClient, token: str, service: str = SERVICE) -> Resp
     )
 
 
+async def delegated_headers(client: AsyncClient, session: str) -> dict[str, str]:
+    """Two-credential proof for the service acting for this signed-in person."""
+    user = await service_token(client, session)
+    return service_call(service_token_value=SERVICE_TOKEN, user_token=user)
+
+
 def state_from(response: Response) -> str:
     """Read the state out of the consent URL, exactly as the provider will.
 
@@ -147,6 +153,50 @@ def problem_without_request_id(response: Response) -> dict[str, Any]:
     """A problem body minus the one field that is meant to differ between requests."""
     body: dict[str, Any] = response.json()
     return {key: value for key, value in body.items() if key != "request_id"}
+
+
+async def test_a_delegated_service_can_start_and_remove_a_connection_without_bearer_forwarding(
+    oauth_client: AsyncClient,
+) -> None:
+    session = await a_person_with_a_profile(oauth_client)
+    headers = await delegated_headers(oauth_client, session)
+
+    started = await oauth_client.post(
+        "/v1/internal/profiles/personal/connections/spotify/authorize", headers=headers
+    )
+    assert started.status_code == 200, started.text
+    assert started.json()["authorization_url"].startswith(AUTHORIZE_URL)
+
+    profile = await oauth_client.get("/v1/internal/profiles/personal", headers=headers)
+    assert profile.json()["connections"][0]["status"] == "pending"
+
+    removed = await oauth_client.delete(
+        "/v1/internal/profiles/personal/connections/spotify", headers=headers
+    )
+    assert removed.status_code == 204
+    after = await oauth_client.get("/v1/internal/profiles/personal", headers=headers)
+    assert after.json()["connections"] == []
+
+
+async def test_delegated_connection_mutations_are_bound_to_the_user_token_subject(
+    oauth_client: AsyncClient,
+) -> None:
+    alice = await a_person_with_a_profile(oauth_client)
+    bob = await a_person_with_a_profile(oauth_client, "other@example.com")
+    alice_headers = await delegated_headers(oauth_client, alice)
+    bob_headers = await delegated_headers(oauth_client, bob)
+    started = await oauth_client.post(
+        "/v1/internal/profiles/personal/connections/spotify/authorize",
+        headers=alice_headers,
+    )
+    assert started.status_code == 200
+
+    bob_profile = await oauth_client.get("/v1/internal/profiles/personal", headers=bob_headers)
+    assert bob_profile.json()["connections"] == []
+    removed = await oauth_client.delete(
+        "/v1/internal/profiles/personal/connections/spotify", headers=bob_headers
+    )
+    assert removed.status_code == 404
 
 
 class TestBeginningAuthorization:

@@ -3,7 +3,7 @@
 This is the boundary that matters most in the whole service, and it is worth being
 explicit about why it looks the way it does.
 
-A consuming service -- media-tool, say -- needs a credential for a *particular person*.
+A consuming service -- example-tool, say -- needs a credential for a *particular person*.
 If it could authenticate as itself and then name whoever it liked, then anything able to
 reach keyring could request anybody's Spotify token: the confused deputy, moved from
 inside one process to the gap between two. So a caller here must present **both**

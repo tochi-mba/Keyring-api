@@ -17,6 +17,7 @@ from fastapi import APIRouter, Response, status
 
 from keyring_api.api.dependencies import ContainerDep, CurrentAccountDep
 from keyring_api.api.schemas.common import Problem
+from keyring_api.api.schemas.delegation import GrantResponse
 from keyring_api.api.schemas.profiles import (
     AuthorizationResponse,
     ConnectionResponse,
@@ -143,7 +144,12 @@ async def get_profile(
     name: str, container: ContainerDep, account: CurrentAccountDep
 ) -> ProfileResponse:
     """One of the calling account's profiles."""
-    return render(await container.credential_service.get_profile(account.account_id, name))
+    response = render(await container.credential_service.get_profile(account.account_id, name))
+    response.grants = [
+        GrantResponse.model_validate(grant)
+        for grant in await container.delegation_service.list(account.account_id, response.name)
+    ]
+    return response
 
 
 @router.delete(

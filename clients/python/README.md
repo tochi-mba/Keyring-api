@@ -11,7 +11,7 @@ clock = SystemClock()
 jwks = JwksClient(url="http://127.0.0.1:8001/.well-known/jwks.json", clock=clock)
 verifier = TokenVerifier(jwks=jwks, issuer="http://127.0.0.1:8001", clock=clock)
 
-identity = await verifier.verify(token, audience=ExactAudience("media-tool"))
+identity = await verifier.verify(token, audience=ExactAudience("example-tool"))
 identity.account_id  # keyring's opaque account id
 
 credentials = CredentialClient(base_url="http://127.0.0.1:8001", service_token=service_token)

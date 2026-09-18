@@ -134,11 +134,11 @@ which is what makes revoking a role take effect on that account's very next requ
 ## Request flow: another service
 
 ```
-POST /v1/auth/service-token   { "audience": "media-tool" }   (as the person)
+POST /v1/auth/service-token   { "audience": "example-tool" }   (as the person)
   → 200 { token }             RS256, ~15 min, audience-scoped
 
 GET /v1/internal/credentials/personal/spotify
-  Authorization:        Bearer <media-tool's own service token>
+  Authorization:        Bearer <example-tool's own service token>
   X-Keyring-User-Token: <the person's signed token>
   → identify the calling service by constant-time comparison
   → verify the user token, audience must be that service

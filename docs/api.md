@@ -176,9 +176,9 @@ curl -s $BASE/v1/profiles/personal -H "Authorization: Bearer $TOKEN"
 
 # As a service, on that person's behalf
 USER_TOKEN=$(curl -sX POST $BASE/v1/auth/service-token -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' -d '{"audience":"media-tool"}' | jq -r .token)
+  -H 'Content-Type: application/json' -d '{"audience":"example-tool"}' | jq -r .token)
 curl -s $BASE/v1/internal/credentials/personal/tmdb \
-  -H "Authorization: Bearer $MEDIA_TOOL_SERVICE_TOKEN" \
+  -H "Authorization: Bearer $EXAMPLE_TOOL_SERVICE_TOKEN" \
   -H "X-Keyring-User-Token: $USER_TOKEN"
 # -> {"service":"tmdb","headers":{"Authorization":"Bearer the-key"},"query_params":{}}
 ```

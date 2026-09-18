@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from keyring_api.api.routers import admin, auth, health, internal, oauth, profiles
+from keyring_api.api.routers import admin, auth, delegation, health, internal, oauth, profiles
 
 if TYPE_CHECKING:
     from fastapi import APIRouter
@@ -23,6 +23,7 @@ ROUTERS: tuple[APIRouter, ...] = (
     oauth.router,
     oauth.well_known,
     internal.router,
+    delegation.router,
     admin.router,
 )
 """Every router the application serves, in the order they are mounted."""

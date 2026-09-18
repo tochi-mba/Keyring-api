@@ -49,6 +49,8 @@ MIN_SERVICE_TOKEN_CHARS = 32
 holds the two numbers together so neither can drift.
 """
 
+MAX_EXCHANGE_AUDIENCE_CHARS = 128
+
 PositiveInt = Annotated[int, Field(gt=0)]
 PositiveFloat = Annotated[float, Field(gt=0)]
 
@@ -317,11 +319,31 @@ class Settings(BaseSettings):
 
     The name is not decoration: a user token presented on ``/v1/internal`` must have been
     minted with exactly this name as its audience. Name each service the way its callers
-    mint -- ``media-tool``, ``spotify-api`` -- and use the same name as that service's
+    mint -- ``example-tool``, ``spotify-api`` -- and use the same name as that service's
     audience everywhere else it is checked, settings-api's grants included.
     """
 
     # -- Per-person settings -----------------------------------------------------------
+    exchange_audiences: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    """Exact downstream audiences each configured service may exchange into; deny by default."""
+
+    offline_grant_max_ttl_seconds: PositiveInt = 30 * 24 * 3600
+    max_offline_grants_per_profile: PositiveInt = 100
+
+    @model_validator(mode="after")
+    def _check_exchange_audiences(self) -> Self:
+        if not self.exchange_audiences.keys() <= self.service_tokens.keys():
+            msg = "exchange_audiences names an unconfigured service"
+            raise ValueError(msg)
+        for audiences in self.exchange_audiences.values():
+            if any(
+                not name or name.strip() != name or len(name) > MAX_EXCHANGE_AUDIENCE_CHARS
+                for name in audiences
+            ):
+                msg = "exchange audiences must be nonempty exact names up to 128 characters"
+                raise ValueError(msg)
+        return self
+
     settings_api_base_url: str | None = None
     """Where settings-api is. Unset, every person gets this configuration as it stands.
 

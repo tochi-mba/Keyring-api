@@ -68,4 +68,4 @@ rather than duplicating, but it is not friendly. Worth adding before this is fro
 anything that retries automatically.
 
 **No streaming or long-poll.** Every operation here returns immediately, so there is
-nothing to poll — unlike media-tool, which needed it.
+nothing to poll — unlike example-tool, which needed it.

@@ -30,7 +30,7 @@ Shipping it from keyring over HTTP is not a real option.
 
 The loop this produces: keyring supplies what is needed to *establish* a session; the
 consuming service keeps the session it established. A site login is fetched from keyring
-once, driven in media-tool's own browser profile, and the resulting cookies persist
+once, driven in example-tool's own browser profile, and the resulting cookies persist
 locally — so later runs need no credential at all until the session expires.
 
 ## What it costs

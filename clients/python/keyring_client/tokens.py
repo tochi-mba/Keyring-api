@@ -65,7 +65,7 @@ class AudiencePolicy(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class ExactAudience:
-    """One audience, spelled exactly: ``media-tool`` accepts ``media-tool`` and nothing else."""
+    """One audience, spelled exactly: ``example-tool`` accepts that and nothing else."""
 
     name: str
 
@@ -80,7 +80,7 @@ class ExactAudience:
 class AudienceFamily:
     """An audience and its compartments: ``user`` accepts ``user`` and ``user.<anything>``.
 
-    The separator is required, which is what stops ``media`` accepting ``media-toolkit``.
+    The separator is required, which is what stops ``example`` accepting ``example-toolkit``.
     What a compartment grants is the consuming service's decision (user-api's scopes,
     settings-api's namespaces), so this only says whether the token belongs to the family and
     hands back the compartment it named.

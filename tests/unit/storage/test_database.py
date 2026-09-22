@@ -12,8 +12,10 @@ The interesting tests here are not the CRUD ones. They are:
 from __future__ import annotations
 
 import asyncio
+import gc
 import sqlite3
 import threading
+import warnings
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -238,8 +240,20 @@ class TestForeignKeys:
             tuple(p for p in CONNECT_PRAGMAS if "foreign_keys" not in p),
         )
 
-        with pytest.raises(StorageError, match="foreign keys are not enabled"):
-            Database(tmp_path / "unsafe.db")
+        threads_before = threading.active_count()
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ResourceWarning)
+            with pytest.raises(StorageError, match="foreign keys are not enabled"):
+                Database(tmp_path / "unsafe.db")
+
+        # A refused connection is closed by the code that opened it. Anything dropped on
+        # the floor is collected here, inside the filter that would make it an error rather
+        # than a line on stderr -- which is how Python 3.13 first reported this leak.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ResourceWarning)
+            gc.collect()
+        assert threading.active_count() == threads_before, "the worker thread was given back"
 
 
 class TestJournalMode:

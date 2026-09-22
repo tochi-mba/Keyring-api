@@ -144,7 +144,14 @@ class Database:
         self._closed = False
         # Submitted rather than called, so the connection is created on the worker
         # thread and is therefore only ever touched by it.
-        self._connection: sqlite3.Connection = self._executor.submit(self._connect).result()
+        try:
+            self._connection: sqlite3.Connection = self._executor.submit(self._connect).result()
+        except BaseException:
+            # `_connect` has already closed a connection that failed its own startup
+            # checks. The thread that opened it still has to be given back here, or a
+            # process that refused to start keeps a worker alive while it tries to exit.
+            self._executor.shutdown(wait=True)
+            raise
 
     @property
     def path(self) -> Path:
@@ -156,18 +163,27 @@ class Database:
         # because the configured path names a file and its parent may not be ours.
         self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         connection = sqlite3.connect(self._path, isolation_level=None)
-        connection.row_factory = sqlite3.Row
+        # Everything after the open is a startup check that may refuse the
+        # connection. A refused connection has to be closed here, because nothing
+        # above holds a reference to it yet: the file handle and the WAL sidecars
+        # would otherwise stay open in a process that is refusing to start, and
+        # Python 3.13 reports exactly that as a ResourceWarning at collection.
+        try:
+            connection.row_factory = sqlite3.Row
 
-        journal_mode = "unknown"
-        for pragma in CONNECT_PRAGMAS:
-            row = connection.execute(pragma).fetchone()
-            if row is not None and pragma.startswith("PRAGMA journal_mode"):
-                journal_mode = str(row[0])
+            journal_mode = "unknown"
+            for pragma in CONNECT_PRAGMAS:
+                row = connection.execute(pragma).fetchone()
+                if row is not None and pragma.startswith("PRAGMA journal_mode"):
+                    journal_mode = str(row[0])
 
-        require_foreign_keys(connection)
-        # After the pragmas, because switching to WAL is what creates the sidecars.
-        make_private(self._path)
-        logger.info("database_opened", journal_mode=journal_mode)
+            require_foreign_keys(connection)
+            # After the pragmas, because switching to WAL is what creates the sidecars.
+            make_private(self._path)
+            logger.info("database_opened", journal_mode=journal_mode)
+        except BaseException:
+            connection.close()
+            raise
         return connection
 
     def run_sync[T](self, work: Callable[[sqlite3.Connection], T]) -> T:

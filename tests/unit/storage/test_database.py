@@ -16,6 +16,7 @@ import gc
 import sqlite3
 import threading
 import warnings
+from contextlib import closing
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -220,16 +221,17 @@ class TestForeignKeys:
         assert await db.fetch_all("SELECT id FROM child") == []
 
     def test_the_guard_refuses_a_connection_without_them(self) -> None:
-        connection = sqlite3.connect(":memory:")
-
-        with pytest.raises(StorageError, match="foreign keys are not enabled"):
+        with (
+            closing(sqlite3.connect(":memory:")) as connection,
+            pytest.raises(StorageError, match="foreign keys are not enabled"),
+        ):
             require_foreign_keys(connection)
 
     def test_the_guard_accepts_a_connection_with_them(self) -> None:
-        connection = sqlite3.connect(":memory:")
-        connection.execute("PRAGMA foreign_keys = ON")
+        with closing(sqlite3.connect(":memory:")) as connection:
+            connection.execute("PRAGMA foreign_keys = ON")
 
-        require_foreign_keys(connection)
+            require_foreign_keys(connection)
 
     async def test_opening_a_database_refuses_when_the_pragma_does_not_take(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -275,6 +277,16 @@ class TestClosing:
         database = Database(tmp_path / "twice.db")
 
         await database.aclose()
+        await database.aclose()
+
+    async def test_the_synchronous_close_shares_the_flag(self, tmp_path: Path) -> None:
+        # The composition root closes without an event loop when its startup fails after
+        # the open. Both closes read one flag, so whichever runs first is the one that
+        # closes and every later close, of either kind, is a no-op.
+        database = Database(tmp_path / "sync.db")
+
+        database.close()
+        database.close()
         await database.aclose()
 
     async def test_data_survives_the_close(self, tmp_path: Path) -> None:

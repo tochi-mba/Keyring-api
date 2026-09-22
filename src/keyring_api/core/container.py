@@ -110,101 +110,108 @@ class Container:
         """
         clock = clock or SystemClock()
         database = Database(settings.database_path)
-        migrate(database, now=clock.now())
-        # Before any account can hold a role, the roles have to exist -- the account_roles
-        # foreign key says so.
-        seed_builtin_roles(database)
-        accounts = SqlAccountStore(database=database)
-        sessions = SqlSessionStore(database=database, clock=clock)
-        grants = SqlGrantStore(database=database)
-        limiter = InMemoryRateLimiter(clock=clock)
-        profiles = SqlProfileStore(database=database)
-        secrets = SqlSecretStore(
-            database=database, master_key=settings.master_key_bytes(), clock=clock
-        )
-        tokens = HttpTokenEndpoint(timeout_seconds=settings.oauth_http_timeout_seconds)
-        outbox = Outbox(build_sender(settings.email))
-        roles = SqlRoleStore(database=database)
-        audit = SqlAuditLog(database=database, clock=clock)
-        signer = TokenSigner(
-            key_path=settings.signing_key_path, issuer=settings.issuer, clock=clock
-        )
-        # Constructed, not contacted. The first login that needs somebody's own session
-        # lifetimes is what provokes the first fetch; a keyring that will not start
-        # because settings-api is down is a keyring that cannot report it being down.
-        # An empty URL keeps today's behaviour exactly.
-        chosen = (
-            preferences
-            if preferences is not None
-            else build_preference_source(settings, client=settings_client, issuer=signer)
-        )
+        # Everything from here on can refuse to start -- a migration that fails, a
+        # policy file that says something the catalogue rejects -- and a refusal
+        # must not leave the database it just opened for the garbage collector.
+        try:
+            migrate(database, now=clock.now())
+            # Before any account can hold a role, the roles have to exist -- the account_roles
+            # foreign key says so.
+            seed_builtin_roles(database)
+            accounts = SqlAccountStore(database=database)
+            sessions = SqlSessionStore(database=database, clock=clock)
+            grants = SqlGrantStore(database=database)
+            limiter = InMemoryRateLimiter(clock=clock)
+            profiles = SqlProfileStore(database=database)
+            secrets = SqlSecretStore(
+                database=database, master_key=settings.master_key_bytes(), clock=clock
+            )
+            tokens = HttpTokenEndpoint(timeout_seconds=settings.oauth_http_timeout_seconds)
+            outbox = Outbox(build_sender(settings.email))
+            roles = SqlRoleStore(database=database)
+            audit = SqlAuditLog(database=database, clock=clock)
+            signer = TokenSigner(
+                key_path=settings.signing_key_path, issuer=settings.issuer, clock=clock
+            )
+            # Constructed, not contacted. The first login that needs somebody's own session
+            # lifetimes is what provokes the first fetch; a keyring that will not start
+            # because settings-api is down is a keyring that cannot report it being down.
+            # An empty URL keeps today's behaviour exactly.
+            chosen = (
+                preferences
+                if preferences is not None
+                else build_preference_source(settings, client=settings_client, issuer=signer)
+            )
 
-        account_service = AccountService(
-            accounts=accounts,
-            sessions=sessions,
-            grants=grants,
-            hasher=Argon2PasswordHasher(settings.argon2),
-            limiter=limiter,
-            outbox=outbox,
-            clock=clock,
-            settings=settings,
-            preferences=chosen,
-        )
-        credential_service = CredentialService(
-            profiles=profiles,
-            secrets=secrets,
-            states=InMemoryOAuthStateStore(clock=clock),
-            tokens=tokens,
-            providers=load_providers(settings.oauth_providers_path),
-            clock=clock,
-            settings=settings,
-        )
-
-        # The same constant-time comparison every consuming service runs on its own internal
-        # surface, so "which service is calling" has one implementation in the family.
-        service_authenticator = ServiceAuthenticator(
-            {name: token.get_secret_value() for name, token in settings.service_tokens.items()},
-            logger=get_logger("keyring_api.api.routers.internal"),
-        )
-
-        return cls(
-            settings=settings,
-            clock=clock,
-            database=database,
-            accounts=accounts,
-            sessions=sessions,
-            grants=grants,
-            limiter=limiter,
-            profiles=profiles,
-            secrets=secrets,
-            tokens=tokens,
-            service_authenticator=service_authenticator,
-            outbox=outbox,
-            signer=signer,
-            roles=roles,
-            audit=audit,
-            account_service=account_service,
-            credential_service=credential_service,
-            delegation_service=DelegationService(
-                store=SqlDelegationStore(database),
-                profiles=profiles,
+            account_service = AccountService(
                 accounts=accounts,
-                signer=signer,
-                audit=audit,
+                sessions=sessions,
+                grants=grants,
+                hasher=Argon2PasswordHasher(settings.argon2),
+                limiter=limiter,
+                outbox=outbox,
+                clock=clock,
+                settings=settings,
+                preferences=chosen,
+            )
+            credential_service = CredentialService(
+                profiles=profiles,
+                secrets=secrets,
+                states=InMemoryOAuthStateStore(clock=clock),
+                tokens=tokens,
+                providers=load_providers(settings.oauth_providers_path),
+                clock=clock,
+                settings=settings,
+            )
+
+            # The same constant-time comparison every consuming service runs on its own internal
+            # surface, so "which service is calling" has one implementation in the family.
+            service_authenticator = ServiceAuthenticator(
+                {name: token.get_secret_value() for name, token in settings.service_tokens.items()},
+                logger=get_logger("keyring_api.api.routers.internal"),
+            )
+
+            return cls(
                 settings=settings,
                 clock=clock,
-            ),
-            admin_service=AdminService(
+                database=database,
                 accounts=accounts,
+                sessions=sessions,
+                grants=grants,
+                limiter=limiter,
+                profiles=profiles,
+                secrets=secrets,
+                tokens=tokens,
+                service_authenticator=service_authenticator,
+                outbox=outbox,
+                signer=signer,
                 roles=roles,
                 audit=audit,
                 account_service=account_service,
                 credential_service=credential_service,
-                clock=clock,
-            ),
-            preferences=chosen,
-            started_monotonic=clock.monotonic(),
-        )
+                delegation_service=DelegationService(
+                    store=SqlDelegationStore(database),
+                    profiles=profiles,
+                    accounts=accounts,
+                    signer=signer,
+                    audit=audit,
+                    settings=settings,
+                    clock=clock,
+                ),
+                admin_service=AdminService(
+                    accounts=accounts,
+                    roles=roles,
+                    audit=audit,
+                    account_service=account_service,
+                    credential_service=credential_service,
+                    clock=clock,
+                ),
+                preferences=chosen,
+                started_monotonic=clock.monotonic(),
+            )
+        except BaseException:
+            database.close()
+            raise
 
     @property
     def uptime_seconds(self) -> float:
@@ -224,11 +231,15 @@ class Container:
 
         # Drained before the HTTP client closes: a queued reset link dropped by a
         # restart is a person waiting for mail that will never arrive.
-        await self.outbox.aclose()
-        await self.preferences.aclose()
-        await self.tokens.aclose()
-        # Last: everything above may still want to write on its way out.
-        await self.database.aclose()
+        try:
+            await self.outbox.aclose()
+            await self.preferences.aclose()
+            await self.tokens.aclose()
+        finally:
+            # Last: everything above may still want to write on its way out. And in a
+            # `finally`, because a close above that raises must not leave the database
+            # open -- an unclosed connection outlives the error that caused it.
+            await self.database.aclose()
 
     async def actor_for(self, account_id: str, roles: tuple[str, ...]) -> Actor:
         """Resolve an account's roles into what it may do, right now.

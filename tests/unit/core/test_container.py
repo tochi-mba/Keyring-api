@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import gc
+import threading
+import warnings
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -11,10 +14,12 @@ import pytest
 from keyring_api.core.container import Container
 from keyring_api.core.preferences import DeploymentPreferences
 from settings_client.testing import FakeSettingsClient
+from tests.conftest import build_settings
 from tests.fakes.clock import FakeClock
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+    from pathlib import Path
 
     from keyring_api.core.config import Settings
 
@@ -153,3 +158,30 @@ async def test_a_substituted_settings_client_is_closed_with_the_container(
         await container.aclose()
 
     assert closed
+
+
+class TestARefusedBuildLeaksNothing:
+    """A build that fails after opening the database must close it.
+
+    Migration and policy loading both run after the open, and a policy file that says
+    something the catalogue refuses is *meant* to raise. That refusal used to drop the
+    open database -- file handle, WAL sidecars and worker thread -- which Python 3.13
+    reports as a ResourceWarning at collection and this suite treats as a failure.
+    """
+
+    def test_a_migration_that_fails_closes_the_database_it_was_given(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def refuse(*_: object, **__: object) -> None:
+            msg = "the schema is not what this build expects"
+            raise RuntimeError(msg)
+
+        monkeypatch.setattr("keyring_api.core.container.migrate", refuse)
+        threads_before = threading.active_count()
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ResourceWarning)
+            with pytest.raises(RuntimeError, match="schema"):
+                Container.build(build_settings(tmp_path), clock=FakeClock())
+            gc.collect()
+        assert threading.active_count() == threads_before, "the worker thread was given back"

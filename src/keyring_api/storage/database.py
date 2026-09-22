@@ -243,6 +243,19 @@ class Database:
         """Run one write statement in its own transaction. Returns rows affected."""
         return await self.transact(lambda connection: connection.execute(sql, parameters).rowcount)
 
+    def close(self) -> None:
+        """Close the connection and stop the worker thread, without an event loop.
+
+        For the one caller that has none: a composition root whose startup failed after the
+        database was opened. It shares the closed flag with :meth:`aclose`, so whichever of
+        the two runs first is the one that closes, and the other is a no-op.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        self._executor.submit(self._connection.close).result()
+        self._executor.shutdown(wait=True)
+
     async def aclose(self) -> None:
         """Close the connection and stop the worker thread. Safe to call twice."""
         if self._closed:

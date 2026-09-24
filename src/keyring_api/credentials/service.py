@@ -237,13 +237,16 @@ class CredentialService:
         )
 
         now = self._clock.now()
+        # No scopes: ``scopes`` is what the provider granted, and until the person
+        # consents it has granted nothing. Recording the request here showed every scope
+        # as granted to a connection nobody had agreed to; the callback records the real
+        # set.
         pending = Connection(
             service=service,
             kind=CredentialKind.OAUTH2_AUTHORIZATION_CODE,
             status=ConnectionStatus.PENDING,
             created_at=now,
             updated_at=now,
-            scopes=provider.scopes,
         )
         await self._put_connection(profile, pending, now=now)
 

@@ -222,6 +222,28 @@ class TestBeginningAuthorization:
         assert connection["status"] == "pending"
         assert connection["kind"] == "oauth2_authorization_code"
 
+    async def test_a_pending_connection_reports_no_granted_scopes(
+        self, oauth_client: AsyncClient
+    ) -> None:
+        """Nobody has consented yet, so nothing is reported as granted.
+
+        The bug, named: the pending placeholder was stored with the provider's configured
+        scopes, so between the consent URL and the callback this route listed every
+        requested scope under ``scopes`` -- a field documented as "what the provider
+        actually granted" (``api/schemas/profiles.py``). The assistant hub reads exactly
+        this route (LUCY-assistant ``src/lucy_api/clients/keyring.py``, ``connections``)
+        and showed the person a grant they had not given.
+        """
+        session = await a_person_with_a_profile(oauth_client)
+        headers = await delegated_headers(oauth_client, session)
+        await begin(oauth_client, session)
+
+        profile = await oauth_client.get("/v1/internal/profiles/personal", headers=headers)
+
+        [connection] = profile.json()["connections"]
+        assert connection["status"] == "pending"
+        assert connection["scopes"] == []
+
     async def test_a_pending_connection_cannot_yet_produce_a_credential(
         self, oauth_client: AsyncClient
     ) -> None:

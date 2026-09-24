@@ -56,3 +56,6 @@ All notable changes to keyring-api are recorded here. The format follows
   rules, and are now stated as such: on Windows, where `os.chmod` cannot express them and
   ACLs decide, the check logs that it was skipped instead of refusing to load. The test
   suite runs green natively on Windows as well as in CI.
+- A connection whose authorization has started but not completed reports no `scopes`.
+  It used to report every scope the provider was asked for, as though the person had
+  already granted them.

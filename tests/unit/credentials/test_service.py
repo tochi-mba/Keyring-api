@@ -394,6 +394,96 @@ class TestAuthorizationFlow:
         with pytest.raises(CredentialUnavailableError, match="never completed"):
             await service.resolve_http_auth(ACCOUNT, "personal", "spotify")
 
+    async def test_reauthorizing_a_working_connection_leaves_it_usable_meanwhile(
+        self, service: CredentialService
+    ) -> None:
+        """Starting a flow again must not take away the credential that already works.
+
+        The bug, named: begin_authorization wrote its pending placeholder over whatever
+        connection was there, so asking for a consent URL for a service that was already
+        connected -- which the hub's ``connect`` tool does whenever the model calls it --
+        flipped a working connection to 'pending'. Every caller was then told it "was
+        never completed; authorize it again" while the token sat unused in the vault.
+        """
+        await service.create_profile(ACCOUNT, "personal")
+        await connect_oauth(service)
+
+        await begin(service)
+
+        connection = (await service.get_profile(ACCOUNT, "personal")).connection("spotify")
+        assert connection is not None
+        assert connection.status is ConnectionStatus.ACTIVE
+        assert connection.scopes == ("user-read-private",)
+        credential = await service.resolve_http_auth(ACCOUNT, "personal", "spotify")
+        assert await credential.headers() == {"Authorization": "Bearer access-1"}
+
+    async def test_an_abandoned_reauthorization_leaves_the_connection_working(
+        self, service: CredentialService, clock: FakeClock, settings: Settings
+    ) -> None:
+        # The "forever" half: nothing ever revisits a placeholder whose flow lapsed, so a
+        # person who opened the consent page and closed it would have lost the connection
+        # until they found out and authorised it again.
+        await service.create_profile(ACCOUNT, "personal")
+        await connect_oauth(service)
+        await begin(service)
+
+        clock.advance(timedelta(seconds=settings.oauth_state_ttl_seconds))
+        await service.sweep_once()
+
+        credential = await service.resolve_http_auth(ACCOUNT, "personal", "spotify")
+        assert await credential.headers() == {"Authorization": "Bearer access-1"}
+
+    async def test_the_new_grant_replaces_the_old_one_once_consent_completes(
+        self, service: CredentialService, endpoint: FakeTokenEndpoint
+    ) -> None:
+        await service.create_profile(ACCOUNT, "personal")
+        await connect_oauth(service)
+        state = await begin(service)
+        endpoint.access_token = "access-2"
+        endpoint.granted_scope = "only-this"
+
+        connection = await service.complete_authorization(state=state, code="the-code")
+
+        assert connection.scopes == ("only-this",)
+        credential = await service.resolve_http_auth(ACCOUNT, "personal", "spotify")
+        assert await credential.headers() == {"Authorization": "Bearer access-2"}
+
+    async def test_reauthorizing_a_connection_that_stopped_working_shows_it_under_way(
+        self, service: CredentialService, endpoint: FakeTokenEndpoint, clock: FakeClock
+    ) -> None:
+        # Only a working connection is kept. An expired one produces no credential either
+        # way, and left as it was, a client polling for the consent it just started would
+        # read 'expired' back at once -- as though the person had already answered.
+        await service.create_profile(ACCOUNT, "personal")
+        await connect_oauth(service)
+        endpoint.fail_with = "invalid_grant"
+        clock.advance(timedelta(seconds=3600 - 60))
+        credential = await service.resolve_http_auth(ACCOUNT, "personal", "spotify")
+        with pytest.raises(CredentialUnavailableError):
+            await credential.headers()
+
+        await begin(service)
+
+        connection = (await service.get_profile(ACCOUNT, "personal")).connection("spotify")
+        assert connection is not None
+        assert connection.status is ConnectionStatus.PENDING
+
+    async def test_a_fresh_attempt_restamps_an_unfinished_placeholder(
+        self, service: CredentialService, clock: FakeClock, settings: Settings
+    ) -> None:
+        # A placeholder holds no credential, so replacing it loses nothing, and its
+        # updated_at then says when the person last tried rather than when they first did.
+        await service.create_profile(ACCOUNT, "personal")
+        await begin(service)
+        clock.advance(timedelta(seconds=settings.oauth_state_ttl_seconds))
+
+        await begin(service)
+
+        connection = (await service.get_profile(ACCOUNT, "personal")).connection("spotify")
+        assert connection is not None
+        assert connection.status is ConnectionStatus.PENDING
+        assert connection.updated_at == clock.now()
+
     async def test_completing_the_flow_stores_a_usable_credential(
         self, service: CredentialService
     ) -> None:

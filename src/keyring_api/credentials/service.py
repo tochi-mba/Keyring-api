@@ -237,18 +237,26 @@ class CredentialService:
         )
 
         now = self._clock.now()
-        # No scopes: ``scopes`` is what the provider granted, and until the person
-        # consents it has granted nothing. Recording the request here showed every scope
-        # as granted to a connection nobody had agreed to; the callback records the real
-        # set.
-        pending = Connection(
-            service=service,
-            kind=CredentialKind.OAUTH2_AUTHORIZATION_CODE,
-            status=ConnectionStatus.PENDING,
-            created_at=now,
-            updated_at=now,
-        )
-        await self._put_connection(profile, pending, now=now)
+        # The placeholder only ever stands where there is no working credential. Written
+        # over a connection that works, it turned it 'pending', which nothing will use --
+        # until the person finished consenting, or for good if they closed the page. A
+        # connection that works keeps working until the callback replaces it; one that
+        # does not (expired, revoked, an earlier placeholder) loses nothing by being
+        # marked as waiting on the consent now under way.
+        existing = profile.connection(service)
+        if existing is None or not existing.is_usable(now=now):
+            # No scopes: ``scopes`` is what the provider granted, and until the person
+            # consents it has granted nothing. Recording the request here showed every
+            # scope as granted to a connection nobody had agreed to; the callback records
+            # the real set.
+            pending = Connection(
+                service=service,
+                kind=CredentialKind.OAUTH2_AUTHORIZATION_CODE,
+                status=ConnectionStatus.PENDING,
+                created_at=now,
+                updated_at=now,
+            )
+            await self._put_connection(profile, pending, now=now)
 
         logger.info("authorization_started", profile=profile.name, service=service)
         return Authorization(

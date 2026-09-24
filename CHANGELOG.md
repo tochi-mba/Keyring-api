@@ -59,3 +59,8 @@ All notable changes to keyring-api are recorded here. The format follows
 - A connection whose authorization has started but not completed reports no `scopes`.
   It used to report every scope the provider was asked for, as though the person had
   already granted them.
+- Starting an OAuth authorization for a service that is already connected and working
+  no longer marks the connection `pending`. It stays usable until the new consent
+  completes and replaces it, and stays usable for good if that consent is abandoned. A
+  connection that no longer works is still marked `pending` while the new consent is
+  under way.

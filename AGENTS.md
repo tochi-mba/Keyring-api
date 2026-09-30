@@ -13,7 +13,8 @@ moment they need one.
 
 It is not a library, and it is not part of another service. The rest of the family reaches
 it over HTTP only: every service verifies its signed tokens against its JWKS document, and
-the services that use third-party accounts also call `/v1/internal`.
+the services that use third-party accounts, or call a sibling for a person, also call
+`/v1/internal`.
 [docs/integration.md](docs/integration.md) is the page for them. The one piece of code
 this repository ships to other services is `clients/python/keyring_client`, the client
 they install to do both.
@@ -34,6 +35,10 @@ contract rather than decoration — see [Invariants](#invariants).
 | `make run` | Serve on :8001 with reload. Docs at `/docs`. |
 | `make cov` | HTML coverage report in `htmlcov/`. |
 | `make smoke` | End-to-end check against a keyring already running on :8099. See `scripts/smoke.py`. |
+| `make schema` | Regenerate `storage/schema.sql` after changing a migration. CI fails if it is stale. |
+| `make docker` | Build the `keyring-api:local` image. See `docs/operations.md`. |
+
+`make help` lists every target.
 
 Always run `make check` rather than a bare `pytest` — piping any of these to `head`/`tail`
 in a shell chain masks the exit code, which is how a broken commit slips through.
@@ -42,7 +47,8 @@ in a shell chain masks the exit code, which is how a broken commit slips through
 
 ```
 src/keyring_api/
-  core/          config, clock, logging, request context, and the composition root
+  core/          config, clock, logging, request context, per-person preferences read
+                 from settings-api, and the composition root
   domain/        pure types and rules: Account, Session, Grant, Profile, Connection,
                  Permission, Role. Imports nothing internal.
   audit/         the append-only record of privileged actions
@@ -53,8 +59,9 @@ src/keyring_api/
   notifications/ EmailSender port, SMTP/file/disabled adapters, the outbox, templates
   accounts/      hashing, tokens, stores, roles, the account service, rate limiting,
                  JWT signing
-  profiles/      ProfileStore port + SQL adapter
-  credentials/   the four consumption ports, the three credential kinds, OAuth, TOTP
+  profiles/      ProfileStore and DelegationStore ports + SQL adapters
+  credentials/   the four consumption ports, the three credential kinds, OAuth, TOTP,
+                 token exchange and offline grants
   admin/         administrative operations over accounts, roles and others' profiles
   api/           FastAPI app, routers, wire schemas, problem+json errors, middleware
 ```
@@ -64,7 +71,8 @@ Dependencies point inward:
 storage → domain`. `core` is a shared kernel everything may use, except `domain`.
 
 A second contract keeps SQL out of `api`, `admin` and `domain`: a router that could write
-a query is a router that will eventually contain one.
+a query is a router that will eventually contain one. A third keeps `settings_client` out of
+everything but `core/preferences.py`, which owns its caching and outage behaviour.
 
 `admin/` started life inside `accounts/` and the layering contract rejected it — correctly.
 An administrative delete has to remove an account's credentials too, and a layer that must
@@ -77,7 +85,7 @@ deliberately and say why in the commit message — do not work around it.
 
 1. **The domain imports nothing from the rest of the package.** import-linter contract.
 2. **Layers point inward.** Also a contract.
-3. **`argon2`, `cryptography` and `jwt` are only imported by their adapters.** A third
+3. **`argon2`, `cryptography` and `jwt` are only imported by their adapters.** Another
    contract. It caught a real leak during the build: the API layer had imported `jwt`
    just to catch `InvalidTokenError`, which would have made swapping the JWT library a
    change to HTTP handlers. `TokenSigner.verify` now raises a domain error instead.
@@ -93,7 +101,8 @@ deliberately and say why in the commit message — do not work around it.
    password because a login form does — and therefore requires two credentials. A contract
    test walks every response schema asserting no secret-bearing field exists.
 7. **Coverage is 100% branch coverage, and the exclusions are only non-executable lines** —
-   `if TYPE_CHECKING:`, bare `...` protocol bodies, `@overload`, the `__main__` guard.
+   `if TYPE_CHECKING:`, bare `...` protocol bodies, `@overload`, a bare
+   `raise NotImplementedError`, the `__main__` guard.
    There is no `# pragma: no cover` in `src/`. If a line is hard to cover, that is usually
    the code telling you it is shaped wrong: two of the awkward ones during the build were
    genuinely dead code and one was a lock held longer than it needed to be.
@@ -115,8 +124,9 @@ deliberately and say why in the commit message — do not work around it.
     grant themselves `roles:write` can reset the owner's password instead.
 12. **Permission is checked before existence** in every administrative method, so a caller
     without the permission cannot use the 403/404 difference to enumerate account ids.
-13. **The last owner cannot be demoted or deleted**, and the check happens inside the
-    store's lock together with the write — otherwise two concurrent demotions both pass.
+13. **The last owner cannot be demoted or deleted**, and the check happens in the same
+    `BEGIN IMMEDIATE` transaction as the write — otherwise two concurrent demotions both
+    pass.
 
 ## How we work: TDD
 
@@ -155,10 +165,10 @@ The claim RBAC makes is that permissions are a closed set and every check goes t
 3. Decide whether `admin` and `auditor` should have it. Default to no.
 4. Add a line to `PERMISSION_DESCRIPTIONS` in `api/routers/admin.py`, or `list_permissions`
    will raise — deliberately, so a new permission cannot be undocumented.
-5. Use it: `actor.require(Permission.X)` in the service, and
-   `dependencies=[Depends(requires(Permission.X))]` on the route. **Both.** The route
-   dependency is the one a reader sees; the service check is the one that still holds when
-   a handler is called from elsewhere.
+5. Use it: `actor.require(Permission.X)` as the first line of the `AdminService` method,
+   which is where every administrative route is checked today, so the check holds however
+   the method is reached. A route with no service method behind it — only
+   `list_permissions` — takes `dependencies=[Depends(requires(Permission.X))]` instead.
 6. Check the permission **before** looking the target up.
 7. Tests: the empty-actor case, the has-it case, and the before-existence ordering.
 

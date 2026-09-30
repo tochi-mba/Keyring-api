@@ -13,9 +13,13 @@ internet. That combination is why this page is a checklist rather than a descrip
       binds `127.0.0.1` by default and should stay there; the proxy is the only thing
       listening publicly. Every token this service issues is a bearer token — over plain
       HTTP, anyone on the path has them.
-- [ ] **`--proxy-headers` on the app, and a proxy that sets them.** Rate limits are keyed
-      by the connection's address. Without this every request appears to come from the
-      proxy and one person exhausts everyone's budget.
+- [ ] **Forwarded addresses trusted from your proxy, and only from it.** Rate limits are
+      keyed by the connection's address. `keyring-api` runs uvicorn, which believes
+      `X-Forwarded-For` only from the addresses in `FORWARDED_ALLOW_IPS` (default
+      `127.0.0.1`). A proxy on the same host needs nothing more; a proxy anywhere else,
+      such as another container, needs `FORWARDED_ALLOW_IPS` set to its address. Without
+      this every request appears to come from the proxy and one person exhausts everyone's
+      budget.
 - [ ] **`KEYRING_MASTER_KEY` set**, from your deployment's secret handling. Not in the
       repository, not in the image, not in a committed `.env`.
 - [ ] **`KEYRING_ADMIN_TOKEN` set**, long and random. This is the break-glass path
@@ -35,6 +39,21 @@ internet. That combination is why this page is a checklist rather than a descrip
 - [ ] **A restore you have actually tried.** A backup you have never restored is a belief,
       not a backup. Copy one to a scratch directory, point a keyring at it on a throwaway
       port, and log in.
+
+## Starting it
+
+`keyring-api` (or `python -m keyring_api`) serves on `KEYRING_HOST`:`KEYRING_PORT`,
+`127.0.0.1:8001` by default. `make run` is the development form, with reload.
+
+`make docker` builds `keyring-api:local`. The image listens on `0.0.0.0:8001`, keeps the
+database and signing key in the `/var/lib/keyring` volume, and deliberately sets neither
+the master key nor the admin token, so they never land in an image layer. Pass them when
+the container starts:
+
+```bash
+docker run -d -p 127.0.0.1:8001:8001 -v keyring-data:/var/lib/keyring \
+  -e KEYRING_MASTER_KEY -e KEYRING_ADMIN_TOKEN keyring-api:local
+```
 
 ## Generating the keys
 
@@ -82,7 +101,7 @@ curl -sX POST https://keyring.example/v1/admin/invites \
   -H "Authorization: Bearer $KEYRING_ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"email":"someone@example.com"}'
-# -> {"grant_id": "...", "token": "...", "expires_at": "..."}
+# -> {"grant_id": "...", "expires_at": "...", "delivered": false, "token": "..."}
 
 # 2. Send them the token over whatever channel you already use with them.
 # 3. They redeem it, choosing their own password:
@@ -93,8 +112,8 @@ curl -sX POST https://keyring.example/v1/auth/invites/redeem \
 
 ### Delivering the token
 
-With `KEYRING_EMAIL__BACKEND=smtp` the invite is emailed and the response omits the token,
-so it exists in exactly one place. With mail disabled — the default — the token is returned
+With `KEYRING_EMAIL__BACKEND=smtp` the invite is emailed, the response says
+`"delivered": true`, and it omits the token, so the token exists in exactly one place. With mail disabled — the default — the token is returned
 to you and you deliver it. Forgotten passwords work the same way: the person calls
 `request_password_reset`, which always answers identically whether or not the address
 exists, and the link is either emailed or handed to you to pass on.
@@ -143,6 +162,30 @@ You cannot grant a permission you do not hold yourself, so an `admin` cannot min
 `GET /v1/admin/audit`, which is the reason to administer through a role rather than through
 break-glass: break-glass entries name no person.
 
+### Letting a service act for them
+
+A service reads a person's credentials only with its own token from
+`KEYRING_SERVICE_TOKENS` *and* a token that person minted for it. To let a service call a
+sibling for somebody, list the sibling's audience in `KEYRING_EXCHANGE_AUDIENCES` under
+that service's name; nothing is allowed by default, and naming a service that has no
+token is a startup error. Offline grants, which let a service keep acting while the person
+is signed out, live at most `KEYRING_OFFLINE_GRANT_MAX_TTL_SECONDS` (30 days) and are
+capped at `KEYRING_MAX_OFFLINE_GRANTS_PER_PROFILE` per profile. The person can list and
+revoke them. [integration.md](integration.md#calling-a-sibling-for-a-person) has the
+details.
+
+### Per-person session settings
+
+Optional. With `KEYRING_SETTINGS_API_BASE_URL` and `KEYRING_SETTINGS_API_TOKEN` both set
+(one without the other is a startup error), each login reads that person's `keyring`
+settings from settings-api: `session_ttl_days`, `session_absolute_ttl_days` and
+`max_sessions`. A person may narrow this deployment's values, never raise them. The grant
+in settings-api needs `audience_prefix` `keyring`, and the token at least 32 characters.
+
+If settings-api cannot be reached, the login goes ahead with this deployment's values. If
+it refuses keyring's token, the login fails, so a missing grant shows up at once rather
+than hiding behind defaults.
+
 ### What to tell them, in plain words
 
 Have this conversation during onboarding rather than after an incident:
@@ -161,8 +204,8 @@ Have this conversation during onboarding rather than after an incident:
 ## The database
 
 One SQLite file, at `KEYRING_DATABASE_PATH`, holding everything: accounts, sessions,
-invites, profiles, connections, roles, the audit log, and the encrypted credential
-material ([ADR-0012](adr/0012-sqlite.md)). It is created mode 0600, and so are its `-wal`
+invites, profiles, connections, offline grants, roles, the audit log, and the encrypted
+credential material ([ADR-0012](adr/0012-sqlite.md)). It is created mode 0600, and so are its `-wal`
 and `-shm` sidecars -- the credential material in them is encrypted, but the password
 hashes and session token hashes are not.
 
@@ -242,7 +285,6 @@ name there rather than remembering not to log it.
 
 ## What is deliberately not here
 
-- **No email.** Reset and invite delivery is manual ([ADR-0009](adr/0009-invite-only.md)).
 - **No WAF, no DDoS protection.** Out of proportion for a dozen known users.
 - **No cryptographic shredding on delete.** Deleting an account deletes its rows
   ([ADR-0005](adr/0005-envelope-encryption.md)); an old backup remains readable.

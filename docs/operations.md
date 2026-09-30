@@ -113,10 +113,11 @@ curl -sX POST https://keyring.example/v1/auth/invites/redeem \
 ### Delivering the token
 
 With `KEYRING_EMAIL__BACKEND=smtp` the invite is emailed, the response says
-`"delivered": true`, and it omits the token, so the token exists in exactly one place. With mail disabled — the default — the token is returned
-to you and you deliver it. Forgotten passwords work the same way: the person calls
-`request_password_reset`, which always answers identically whether or not the address
-exists, and the link is either emailed or handed to you to pass on.
+`"delivered": true`, and it omits the token, so the token exists in exactly one place. With
+mail disabled — the default — the token is returned to you and you deliver it. Forgotten
+passwords work the same way: the person calls `request_password_reset`, which always answers
+identically whether or not the address exists, and the link is either emailed or handed to
+you to pass on.
 
 ### Mail
 

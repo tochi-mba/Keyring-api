@@ -41,8 +41,8 @@ test requires a summary and a description of more than forty characters on every
 so an undescribed route cannot ship.
 
 **Bounded payloads.** No endpoint returns unbounded lists: profiles are capped per account,
-connections and offline grants per profile, and the audit log takes a limit. Responses stay a predictable size in a
-context window.
+connections and offline grants per profile, and the audit log takes a limit. Responses stay
+a predictable size in a context window.
 
 **One error shape.** Every failure is RFC 9457 problem+json with a `request_id`, so a model
 has exactly one error format to understand rather than one per endpoint.

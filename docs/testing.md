@@ -1,9 +1,9 @@
 # How this is tested
 
 `make check` is the gate: format, lint, strict types over `src`, `tests` **and** the
-client in `clients/python`, the layering contracts, and the suite at 100% branch coverage. Coverage is the floor, not the
-goal — the concentration is deliberate, because most of what can go wrong in this service
-goes wrong silently.
+client in `clients/python`, the layering contracts, and the suite at 100% branch coverage.
+Coverage is the floor, not the goal — the concentration is deliberate, because most of what
+can go wrong in this service goes wrong silently.
 
 ## Where the volume is, and why
 

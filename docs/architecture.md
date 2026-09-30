@@ -17,10 +17,12 @@ import-linter contracts in `pyproject.toml` rather than by convention.
                     ┌───────────────▼──────────────────┐
                     │  credentials/  kinds, the four   │
                     │                consumption ports,│
-                    │                OAuth, TOTP       │
+                    │                OAuth, TOTP,      │
+                    │                token exchange    │
                     └───────────────┬──────────────────┘
                     ┌───────────────▼──────────────────┐
-                    │  profiles/     ProfileStore      │
+                    │  profiles/     ProfileStore,     │
+                    │                DelegationStore   │
                     └───────────────┬──────────────────┘
                     ┌───────────────▼──────────────────┐
                     │  accounts/     hashing, tokens,  │
@@ -32,22 +34,23 @@ import-linter contracts in `pyproject.toml` rather than by convention.
                     │                 outbox, templates│
                     └───────────────┬──────────────────┘
                     ┌───────────────▼──────────────────┐
-                    │  secrets/      SecretStore +      │
-                    │                envelope crypto    │
+                    │  secrets/      SecretStore +     │
+                    │                envelope crypto   │
                     └───────────────┬──────────────────┘
                     ┌───────────────▼──────────────────┐
-                    │  audit/        privileged actions │
+                    │  audit/        privileged actions│
                     └───────────────┬──────────────────┘
                     ┌───────────────▼──────────────────┐
-                    │  storage/      one SQLite file,   │
-                    │                one thread         │
+                    │  storage/      one SQLite file,  │
+                    │                one thread        │
                     └───────────────┬──────────────────┘
                     ┌───────────────▼──────────────────┐
-                    │  domain/       pure types & rules │
-                    │                (imports nothing)  │
+                    │  domain/       pure types & rules│
+                    │                (imports nothing) │
                     └──────────────────────────────────┘
 
-  core/  config · clock · logging · request context · composition root
+  core/  config · clock · logging · request context · composition root ·
+         per-person preferences from settings-api
          (a shared kernel every layer may use, except domain)
 ```
 
@@ -65,8 +68,12 @@ router that will eventually contain one.
 
 ### 1. Isolation is in the signatures
 
-Every store method takes an `account_id`, and it is not optional on any of them. A
-cross-account read is not a bug that can be introduced — it cannot be expressed. The API
+Every store method that reads or changes one person's data takes an `account_id`, or a
+record that carries one, and it is not optional. A cross-account read is not a bug that
+can be introduced — it cannot be expressed. Two lookups start elsewhere, deliberately:
+`ProfileStore.all_profiles`, which only `/ready` uses, to count unusable connections; and
+`DelegationStore.for_exchange`, which finds an offline grant by its handle *and* the
+calling service together, so the account comes from the grant rather than the caller. The API
 layer never accepts an account id as a parameter either: it comes from the session, or
 from a verified service token, and from nowhere else.
 
@@ -151,6 +158,26 @@ Both credentials are required because either alone is a hole. With only the serv
 token, anything that could reach keyring could request anybody's credential — the confused
 deputy, moved from inside one process to the gap between two.
 
+## Request flow: a service calling a sibling
+
+```
+POST /v1/internal/token-exchange   { "audience": "user.home" }
+  Authorization:        Bearer <example-tool's own service token>
+  X-Keyring-User-Token: <the person's token for example-tool>   (or "grant_id" in the body)
+  → identify the calling service
+  → the audience must be in that service's allowlist        ← 403 here, deny by default
+  → verify the user token for that service, or load the offline grant bound to it
+  → the account must still be active
+  → mint a NEW token for that audience and that account, no longer-lived than its source
+  → record the exchange in the audit log
+  → 200 { token, expires_in, expires_at }
+```
+
+The token a service was given is never passed on: its audience is that service, and a
+sibling would refuse it. An offline grant is the person's recorded consent for one service
+to do this while they are away. Its handle is useless without that service's own token,
+and the allowlist is checked again on every exchange, so narrowing it takes effect at once.
+
 ## How storage is serialized, and why it is not a lock
 
 Everything is one SQLite file ([ADR-0012](adr/0012-sqlite.md)). Every call goes through a
@@ -192,6 +219,7 @@ control, and the setting is read back and verified rather than assumed.
 | Invite / reset token | SHA-256 hash | 7d / 1h, single use |
 | OAuth state | SHA-256 hash | 10 min, single use |
 | Service token | not stored — signed | ~15 min |
+| Offline grant handle | plaintext id, no authority without the named service's token | up to 30d, or until revoked |
 | OAuth access + refresh token | AES-256-GCM, envelope | until revoked at the provider |
 | API key, password, TOTP seed | AES-256-GCM, envelope | until deleted |
 

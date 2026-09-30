@@ -1,8 +1,10 @@
 # The HTTP contract
 
-One service, one `/openapi.json`, served at `/docs`. Everything under `/v1` requires
-authentication; `/healthy`, `/ready` and `/.well-known/jwks.json` do not, for reasons
-given below.
+One service, one `/openapi.json`, served at `/docs`. Everything under `/v1` requires a
+credential except the routes that exist to obtain or recover one: `login`,
+`redeem_invite`, `request_password_reset`, `redeem_password_reset`, and the OAuth
+callback, which is authenticated by its single-use state rather than a header.
+`/healthy`, `/ready` and `/.well-known/jwks.json` are open too, for reasons given below.
 
 Route `operation_id`s are **public API** — they become MCP tool names
 ([docs/mcp.md](mcp.md)) — and a contract test pins the exact set. Renaming one is a
@@ -96,14 +98,55 @@ not affect you.
 | --- | --- |
 | `resolve_credential` | `GET /v1/internal/credentials/{profile}/{service}` |
 | `resolve_form_secrets` | `GET /v1/internal/form-secrets/{profile}/{service}` |
+| `describe_delegated_profile` | `GET /v1/internal/profiles/{name}` |
+| `authorize_delegated_connection` | `POST /v1/internal/profiles/{name}/connections/{connection}/authorize` |
+| `delete_delegated_connection` | `DELETE /v1/internal/profiles/{name}/connections/{connection}` |
+| `exchange_user_token` | `POST /v1/internal/token-exchange` |
 
-Both require two credentials: `Authorization: Bearer <service token>` **and**
-`X-Keyring-User-Token: <the user's signed token>`. The account comes from the user's
-token; no parameter names an account.
+All of them require the calling service's own token, `Authorization: Bearer <service
+token>`, from `KEYRING_SERVICE_TOKENS`. All but `exchange_user_token` also require
+`X-Keyring-User-Token: <the user's signed token>`, minted with the calling service's name
+as its audience. The account comes from the user's token; no parameter names an account.
 
 `resolve_form_secrets` is the one endpoint that returns credential material, because a
 login form needs a password. That is exactly why it is behind two credentials, and why it
 must never be exposed as an assistant tool.
+
+The three `/v1/internal/profiles` routes let a service show a person their connections,
+start an OAuth consent, or disconnect one, on that person's behalf. They return status
+and a consent URL, never a stored value.
+
+### Token exchange and offline grants
+
+| Operation | Route | Authenticated by |
+| --- | --- | --- |
+| `exchange_user_token` | `POST /v1/internal/token-exchange` | service token, plus a user token or a grant |
+| `create_offline_grant` | `POST /v1/profiles/{name}/grants` | the person's session |
+| `list_offline_grants` | `GET /v1/profiles/{name}/grants` | the person's session |
+| `revoke_offline_grant` | `DELETE /v1/profiles/{name}/grants/{grant_id}` | the person's session |
+
+A service that must call a sibling for a person exchanges its own authority for a new
+token with the sibling's audience. It never forwards the token it was given. The body
+names one `audience` and an optional `ttl_seconds` (default 900). Send either
+`X-Keyring-User-Token` (a token whose audience is the calling service) or a `grant_id`,
+never both. The answer is `{token, token_type, expires_in, expires_at}`.
+
+- The audience must be in the calling service's `KEYRING_EXCHANGE_AUDIENCES` list, or the
+  answer is **403**. Nothing is allowed by default.
+- The new token lives no longer than the smallest of the requested lifetime,
+  `KEYRING_ACCESS_TOKEN_TTL_SECONDS`, and whatever it was exchanged from.
+- A bad user token, an unknown, revoked or expired grant, a grant for another service or
+  audience, and a disabled account all answer the same **401**.
+
+An **offline grant** is the person's consent for one service to exchange for a fixed set of
+audiences while they are not signed in. `create_offline_grant` takes `service`,
+`audiences` and `ttl_seconds` (default 30 days, capped by
+`KEYRING_OFFLINE_GRANT_MAX_TTL_SECONDS`). Every audience must be in that service's
+allowlist (**403** otherwise), and a profile holds at most
+`KEYRING_MAX_OFFLINE_GRANTS_PER_PROFILE` (**429** past that). The `grant_id` it returns is
+not a credential on its own: only the named service, presenting its own token, can use it.
+Revoking stops future exchanges; tokens already minted run to their short expiry. Listing
+shows expired and revoked grants too, so the consent history stays visible.
 
 ### Administration
 
@@ -151,6 +194,11 @@ what is behind them, and `profiles:delete_any` destroys without reading.
 
 ## Worked example
 
+This assumes a local keyring started with `KEYRING_ADMIN_TOKEN` set, mail left disabled
+(so the invite token comes back in the response), and
+`KEYRING_SERVICE_TOKENS='{"example-tool":"<its token>"}'`, with that same token exported
+as `EXAMPLE_TOOL_SERVICE_TOKEN`. It uses `jq`.
+
 ```bash
 BASE=http://127.0.0.1:8001
 
@@ -180,5 +228,5 @@ USER_TOKEN=$(curl -sX POST $BASE/v1/auth/service-token -H "Authorization: Bearer
 curl -s $BASE/v1/internal/credentials/personal/tmdb \
   -H "Authorization: Bearer $EXAMPLE_TOOL_SERVICE_TOKEN" \
   -H "X-Keyring-User-Token: $USER_TOKEN"
-# -> {"service":"tmdb","headers":{"Authorization":"Bearer the-key"},"query_params":{}}
+# -> {"service":"tmdb","headers":{"Authorization":"Bearer the-key"},"query_params":{},"expires_at":null}
 ```

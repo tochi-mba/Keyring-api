@@ -52,5 +52,6 @@ written yet.
 ## What would change our minds
 
 Nothing about the split. The MCP OAuth 2.1 authorization spec (revised 2026-07-28) is the
-natural replacement for the *person* half when other MCP clients need to connect — it drops
-in behind the same `Authenticator` port.
+natural replacement for the *person* half when other MCP clients need to connect. It would
+replace the session lookup in `api/dependencies.py` (`get_current_session`), the one place
+a request becomes an account, and nothing behind it would change.

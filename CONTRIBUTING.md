@@ -13,7 +13,9 @@ export KEYRING_ADMIN_TOKEN="$(python -c 'import secrets; print(secrets.token_url
 make run          # http://127.0.0.1:8001/docs
 ```
 
-Optionally `pre-commit install` — a fast subset of `make check` on staged files.
+Optionally, install the git hooks in `.pre-commit-config.yaml` — a fast subset of
+`make check` on staged files. pre-commit is not one of this project's dependencies, so
+install it as a tool first: `uv tool install pre-commit`, then `pre-commit install`.
 
 ## The loop
 

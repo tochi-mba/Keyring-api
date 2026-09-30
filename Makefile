@@ -37,7 +37,7 @@ matrix: ## Run the tests on every Python CI runs, because one is not enough
 	@# green CI run. Coverage in particular differs between versions: until 3.12,
 	@# isinstance() against a runtime-checkable Protocol executed property getters, so a
 	@# property with no test of its own looked covered on 3.11 and did not on 3.12.
-	for version in 3.11 3.12; do \
+	for version in 3.12 3.13; do \
 		echo "== python $$version =="; \
 		$(UV) run --python $$version pytest --cov -q || exit 1; \
 	done

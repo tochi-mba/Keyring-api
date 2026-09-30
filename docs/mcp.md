@@ -22,6 +22,8 @@ reason".
 | Everything under `/v1/admin` | A model that can delete accounts or assign roles is a model one confused turn away from an incident. |
 | `login`, `change_password`, `redeem_password_reset` | Credential entry is a person's job. |
 | `put_api_key`, `put_password` | Same. A model should never be the thing that types a secret. |
+| Everything under `/v1/internal` | Service-to-service. Each route needs a service's own token, which a model must never hold, and `exchange_user_token` mints new authority. |
+| `create_offline_grant` | Consent for a service to act while the person is away is theirs to give, not a model's. |
 
 The general shape: **a model may ask what identities exist; the service acting for it uses
 them.** That split is the whole reason `/v1/internal` requires both a service token and the
@@ -39,7 +41,7 @@ test requires a summary and a description of more than forty characters on every
 so an undescribed route cannot ship.
 
 **Bounded payloads.** No endpoint returns unbounded lists: profiles are capped per account,
-connections per profile, the audit log takes a limit. Responses stay a predictable size in a
+connections and offline grants per profile, and the audit log takes a limit. Responses stay a predictable size in a
 context window.
 
 **One error shape.** Every failure is RFC 9457 problem+json with a `request_id`, so a model

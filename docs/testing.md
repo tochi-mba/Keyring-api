@@ -1,7 +1,7 @@
 # How this is tested
 
-`make check` is the gate: format, lint, strict types over `src` **and** `tests`, the
-layering contracts, and the suite at 100% branch coverage. Coverage is the floor, not the
+`make check` is the gate: format, lint, strict types over `src`, `tests` **and** the
+client in `clients/python`, the layering contracts, and the suite at 100% branch coverage. Coverage is the floor, not the
 goal — the concentration is deliberate, because most of what can go wrong in this service
 goes wrong silently.
 
@@ -12,8 +12,9 @@ goes wrong silently.
 | **Enumeration** | Login with a known and an unknown address produce byte-identical responses. Reset request answers identically either way. Cross-account access is 404, never 403. Each is the easiest thing to get wrong and the hardest to notice. |
 | **Timing** | The dummy-hash path is taken for a missing account — asserted by observing the call, not by measuring a clock. A wall-clock assertion would be measuring the CI runner. |
 | **Escalation** | Every guard has a test written *as an attacker*: grant above yourself, create-then-grant, edit a role you already hold, self-target, do it in two steps. |
-| **Isolation** | One account reading, writing or deleting another's job, artifact, profile or credential. One test per verb, each named for the property. |
+| **Isolation** | One account reading, writing or deleting another's profile, connection, offline grant or credential. One test per verb, each named for the property. |
 | **Tokens** | Single use, TTL expiry through a fake clock, tampering rejected, hashed at rest, constant-time compare. |
+| **Delegation** | An exchanged token has the same subject, one allowlisted audience, and no longer a life than its source. A revoked or foreign grant, a token for another audience, or a disabled account cannot exchange. |
 | **Session lifecycle** | Revoke one, revoke all, every session dies on password change and on reset. |
 | **Secret handling** | No secret in any response — walked over every response schema in the OpenAPI document, so a field added later is caught here. None in logs, on any path including the failure paths. Files 0600. |
 | **Concurrency** | Two simultaneous demotions of the last two owners must leave one. Two callbacks racing one OAuth state: exactly one wins. |

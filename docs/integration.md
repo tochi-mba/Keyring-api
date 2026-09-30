@@ -56,16 +56,19 @@ The example placeholders above must be replaced before deployment.
 
 ## Python client
 
-While the client is unreleased, consumers use the sibling checkout:
+Consumers install the client from a tagged git source, the way the rest of the family
+does. No sibling checkout is needed:
 
 ```toml
+[project]
+dependencies = ["keyring-client"]
+
 [tool.uv.sources]
-keyring-client = { path = "../Keyring-api/clients/python", editable = true }
+keyring-client = { git = "https://github.com/tochi-mba/Keyring-api", subdirectory = "clients/python", tag = "keyring-client-v0.1.0" }
 ```
 
-Add `keyring-client` to the consumer's project dependencies as well. A single-repo
-checkout, CI build or Docker build must provide the sibling client at that path.
-Publishing and pinning a released client is a separate release step.
+A client change is released by tagging `keyring-client-v<version>` here; consumers move
+by bumping the tag and refreshing `uv.lock`. Never vendor a copy.
 
 ```python
 from keyring_client import ExactAudience, JwksClient, SystemClock, TokenVerifier, jwks_url
@@ -82,7 +85,8 @@ await jwks.aclose()
 Use `AudienceFamily("user")` when the service implements compartment audiences.
 The service remains responsible for interpreting and enforcing those compartments.
 Build clients once in the composition root, supply the service's logger and clock,
-and close them in the application lifespan.
+and close them in the application lifespan: `JwksClient` and `CredentialClient` each
+have an `aclose()`.
 
 ### Resolving credentials
 
@@ -128,6 +132,53 @@ The JWKS client starts lazily, coalesces concurrent requests, limits unknown-key
 refreshes, and serves cached public keys for a bounded grace period during an outage.
 A successful fetch that lacks the requested key is an authentication failure.
 `healthy()` reports cached-key degradation separately from a cold fetch failure.
+
+### Readiness
+
+A consumer's own `/ready` should call `await jwks.healthy()`. It answers `(True, None)`
+when a token could be verified now, and `(False, reason)` otherwise, where the reason says
+whether cached keys are still being served through an outage. Report that; do not raise.
+
+Do not point a consumer's readiness at keyring's `/ready`. That goes 503 when any one
+person's stored connection stops working, which says nothing about whether this service
+can verify tokens, and would take it out of rotation for somebody else's expired grant.
+
+## Calling a sibling for a person
+
+A service that must call another service for the person it is serving never forwards the
+token it was given: that token's audience is the calling service, and the sibling would
+refuse it anyway. It exchanges instead:
+
+```text
+POST /v1/internal/token-exchange
+Authorization: Bearer <the calling service's secret>
+X-Keyring-User-Token: <the person's token for the calling service>
+
+{"audience": "user.home", "ttl_seconds": 300}
+```
+
+The answer is a fresh token for that one audience, for the same account, expiring no later
+than the token it came from. Each audience a service may ask for is listed, exactly, in
+keyring's configuration; nothing is allowed by default:
+
+```dotenv
+KEYRING_EXCHANGE_AUDIENCES='{"example-tool": ["user.home", "settings.example-tool"]}'
+```
+
+Every key there must also be a service in `KEYRING_SERVICE_TOKENS`, or keyring refuses to
+start.
+
+For work that runs while the person is not signed in, the person first records an
+**offline grant** with their session (`POST /v1/profiles/{name}/grants`, naming the
+service and the audiences). The service then sends `{"audience": ..., "grant_id": ...}`
+with no user token. The grant expires, the person can revoke it, and it is useless to
+anything but the service it names. [api.md](api.md#token-exchange-and-offline-grants)
+has the full contract.
+
+A service that lets a person manage connections through it uses the three
+`/v1/internal/profiles/{name}` routes, with the same two headers as credential
+resolution. They report status and start or remove a connection; they never return a
+stored value.
 
 ## Tests and persistence
 

@@ -1,6 +1,8 @@
 # ADR-0005: one master key, envelope encryption, no per-tenant keys
 
-**Status:** accepted
+**Status:** accepted. Since [ADR-0012](0012-sqlite.md) each envelope is a row in the
+SQLite database rather than a file, and the database is what is created 0600. The scheme
+below is unchanged; read "files" as those rows.
 
 ## Context
 

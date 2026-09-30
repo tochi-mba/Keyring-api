@@ -21,6 +21,13 @@ All notable changes to keyring-api are recorded here. The format follows
   every session uses the configuration as before. An outage falls back to the
   deployment's values rather than failing a login; a refusal fails the login, because a
   missing grant must not be hidden behind defaults.
+- **Token exchange and offline grants.** `POST /v1/internal/token-exchange` lets a
+  configured service trade a person's token, or an offline grant, for a short-lived token
+  with one allowlisted downstream audience (`KEYRING_EXCHANGE_AUDIENCES`, deny by
+  default). The caller's token is never forwarded. People create, list and revoke offline
+  grants under `/v1/profiles/{name}/grants`, and services read and manage a person's
+  connections through `/v1/internal/profiles/{name}`. Migration `0004_offline_grants.sql`
+  adds the table. See [docs/api.md](docs/api.md#token-exchange-and-offline-grants).
 - Migration `0003_session_idle_ttl.sql` stamps the idle TTL on each session at creation,
   so changing the setting reshapes new sessions only and never a live one.
 
@@ -33,8 +40,10 @@ All notable changes to keyring-api are recorded here. The format follows
   [ADR-0008](https://github.com/tochi-mba/LUCY-assistant/blob/main/docs/adr/0008-python-3-12-floor.md):
   `weftai`, which the assistant hub depends on, requires 3.12 and uses PEP 695 type
   parameters that do not parse on 3.11. Generics here moved to PEP 695 syntax with it.
-- CI inherits `FAMILY_GITHUB_TOKEN`; image builds accept a BuildKit `github_token`
-  secret so tagged client packages can be fetched from private family repositories.
+- CI mints a short-lived family token through the family's OIDC token broker
+  (`id-token: write`) rather than holding a long-lived secret; image builds accept a
+  BuildKit `github_token` secret so tagged client packages can be fetched from private
+  family repositories.
   `make docker` uses the signed-in GitHub account without saving its token in an image.
 - **Breaking:** `GET /healthy` is liveness only -- the process is running, no I/O, and it
   never fails. The account, vault and connection checks moved to a new `GET /ready`

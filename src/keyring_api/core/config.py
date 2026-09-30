@@ -323,7 +323,7 @@ class Settings(BaseSettings):
     audience everywhere else it is checked, settings-api's grants included.
     """
 
-    # -- Per-person settings -----------------------------------------------------------
+    # -- Token exchange and offline grants ---------------------------------------------
     exchange_audiences: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     """Exact downstream audiences each configured service may exchange into; deny by default."""
 
@@ -344,6 +344,7 @@ class Settings(BaseSettings):
                 raise ValueError(msg)
         return self
 
+    # -- Per-person settings -----------------------------------------------------------
     settings_api_base_url: str | None = None
     """Where settings-api is. Unset, every person gets this configuration as it stands.
 

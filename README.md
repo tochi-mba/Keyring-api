@@ -22,8 +22,14 @@ GET  /v1/internal/credentials/{profile}/{service}        -> headers to attach, f
 ```bash
 make install
 export KEYRING_MASTER_KEY="$(python -c 'import base64,os; print(base64.b64encode(os.urandom(32)).decode())')"
+export KEYRING_ADMIN_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 make run       # http://127.0.0.1:8001/docs
 ```
+
+There is no sign-up. Mint an invite with the admin token (`POST /v1/admin/invites`) and
+redeem it with a password (`POST /v1/auth/invites/redeem`); with mail left disabled, the
+default, the invite token comes back in the response. The
+[worked example](docs/api.md#worked-example) has both calls.
 
 The first account you create becomes the **owner**; everyone after gets `member`. Roles are
 data, so you can define whatever you need — and no role, not even owner, can read another
@@ -41,7 +47,10 @@ For another service, start with [Integrating with keyring](docs/integration.md).
 | [AGENTS.md](AGENTS.md) | How work is done here: the map, the invariants, the recipes. |
 | [docs/architecture.md](docs/architecture.md) | Ports, adapters, and why the layering is enforced. |
 | [docs/api.md](docs/api.md) | The HTTP contract. |
+| [docs/integration.md](docs/integration.md) | Verifying tokens, reading credentials and calling siblings, from another service. |
 | [docs/operations.md](docs/operations.md) | Running it on the internet, and what that costs you. |
+| [docs/testing.md](docs/testing.md) | Where the tests concentrate, and why. |
+| [docs/mcp.md](docs/mcp.md) | Which operations may ever become assistant tools. |
 | [docs/adr/](docs/adr/) | The decisions, and what each one traded away. |
 
 ## What it will not do

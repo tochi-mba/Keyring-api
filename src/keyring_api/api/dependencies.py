@@ -4,8 +4,10 @@ The container is built once at startup and parked on the app; these turn it into
 parameters so handlers never reach into application state themselves.
 
 :data:`CurrentAccountDep` is the important one. It is the single place a request becomes
-an account, which is what makes "every ``/v1`` route requires an account" a fact about
-the code rather than a convention that holds until someone forgets a decorator.
+an account: a route that takes it requires one, and a route that does not is public by
+design (logging in, redeeming an invite, resetting a password, the OAuth callback). That
+makes which routes need an account a fact about the code rather than a convention that
+holds until someone forgets a decorator.
 """
 
 from __future__ import annotations

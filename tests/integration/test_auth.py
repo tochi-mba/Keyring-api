@@ -495,6 +495,8 @@ class TestContract:
             "describe_delegated_profile",
             "authorize_delegated_connection",
             "delete_delegated_connection",
+            "create_delegated_grant",
+            "revoke_delegated_grant",
             # administration
             "issue_invite",
             "delete_account",

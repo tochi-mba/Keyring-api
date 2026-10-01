@@ -5,7 +5,7 @@ description = "Accounts, profiles and credentials: the vault every other service
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-authors = [{ name = "tochi-mba" }]
+authors = [{ name = "REX Technologies" }]
 keywords = ["fastapi", "credentials", "oauth2", "accounts", "mcp"]
 classifiers = [
     "Private :: Do Not Upload",
@@ -145,8 +145,8 @@ convention = "google"
 # --------------------------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.12"
-files = ["src", "tests", "clients/python"]
-mypy_path = "clients/python"
+files = ["src", "tests", "clients/python", "scripts"]
+mypy_path = ["clients/python", "scripts"]
 strict = true
 warn_unreachable = true
 warn_unused_ignores = true

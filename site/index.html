@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Keyring holds accounts, profiles and credentials. One person logs in once; services ask for a usable credential at the moment they need it, and no endpoint ever hands a stored secret back out. A REX Technologies product.">
+<meta name="robots" content="index,follow">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#080A09">
+<meta property="og:title" content="Keyring — the vault your services authenticate against — REX Technologies">
+<meta property="og:description" content="Keyring holds accounts, profiles and credentials. One person logs in once; services ask for a usable credential at the moment they need it, and no endpoint ever hands a stored secret back out. A REX Technologies product.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tochi-mba.github.io/Keyring-api/">
+<meta name="twitter:card" content="summary">
+<link rel="canonical" href="https://tochi-mba.github.io/Keyring-api/">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script>document.documentElement.classList.replace("no-js","js");</script>
+<noscript><style>@media(max-width:760px){.site-nav{display:flex!important;position:static!important;flex-direction:column}.menu-button{display:none!important}}</style></noscript>
+<title>Keyring — the vault your services authenticate against — REX Technologies</title>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="ambient ambient-one" aria-hidden="true"></div>
+<div class="ambient ambient-two" aria-hidden="true"></div>
+
+<header class="site-header">
+  <div class="container nav-wrap">
+    <a class="brand" href="#top" aria-label="Keyring, by REX Technologies">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><circle cx="11" cy="16" r="5"/><path d="M16 16h11M23 16v4M27 16v3"/></svg></span>
+      <span class="brand-lockup"><span class="brand-company">REX Technologies</span><span class="brand-name">Keyring</span></span>
+    </a>
+    <button class="menu-button" type="button" aria-expanded="false" aria-controls="site-nav"><span class="sr-only">Toggle navigation</span><span></span><span></span></button>
+    <nav id="site-nav" class="site-nav" aria-label="Primary navigation">
+      <a href="#how">How it works</a>
+      <a href="#api">The API</a>
+      <a href="#install">Run it</a>
+      <a href="#limits">What it will not do</a>
+      <a href="#docs">Docs</a>
+      <a class="nav-github" href="https://github.com/tochi-mba/Keyring-api">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero container" id="top">
+    <div class="hero-copy">
+      <p class="eyebrow signal">Accounts · profiles · credentials</p>
+      <h1>One login. <span>No secret</span> ever handed back out.</h1>
+      <p class="hero-lede">One person logs in once. Their profiles hold the credentials for third-party services, and any service that needs one asks keyring for a usable credential at the moment it needs it. No other service stores a secret.</p>
+      <div class="hero-actions">
+        <a class="button button-primary" href="#install">Run it on your machine</a>
+        <a class="button button-secondary" href="https://github.com/tochi-mba/Keyring-api">Source on GitHub</a>
+      </div>
+      <div class="hero-meta">
+        <span>Python 3.12+</span>
+        <span>Serves on :8001</span>
+        <span>Encrypted at rest</span>
+        <span>MIT licensed</span>
+      </div>
+    </div>
+    <pre class="console" aria-label="The routes keyring is built around"><code><span class="k">POST</span> /v1/auth/login                                       -&gt; an opaque session token
+<span class="k">POST</span> /v1/profiles                                         -&gt; a named credential set
+<span class="k">POST</span> /v1/profiles/{name}/connections/{service}/authorize  -&gt; an OAuth consent URL
+<span class="k">GET</span>  /v1/profiles/{name}                                  -&gt; which connections exist, and whether they are live
+<span class="k">GET</span>  /v1/internal/credentials/{profile}/{service}         -&gt; headers to attach, for a service acting for a person</code></pre>
+  </section>
+
+  <section class="trust-strip">
+    <div class="container trust-grid">
+      <div><strong>No sign-up</strong><span>Invite only. The first account becomes the owner.</span></div>
+      <div><strong>Roles are data</strong><span>Admin routes are authorised by permission, not by being the operator.</span></div>
+      <div><strong>Nobody reads yours</strong><span>No role, not even owner, can read another account&#x27;s credentials.</span></div>
+      <div><strong>Verified locally</strong><span>Services check short-lived tokens against keyring&#x27;s published keys.</span></div>
+    </div>
+  </section>
+
+  <section class="section container" id="how">
+    <div class="section-heading">
+      <p class="eyebrow signal">How it works</p>
+      <h2>A person logs in once. Services borrow, and never keep.</h2>
+      <p>Keyring is the authentication root of the LUCY family: every other service verifies its tokens and none of them stores a secret.</p>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <span class="step-number">01</span>
+        <h3>A person, and their profiles</h3>
+        <p>A login returns an opaque session token. Profiles such as <code>personal</code> and <code>work</code> each hold their own connections: an OAuth grant, an API key, or the fields for a login form.</p>
+      </div>
+      <div class="step">
+        <span class="step-number">02</span>
+        <h3>A token for exactly one service</h3>
+        <p><code>POST /v1/auth/service-token</code> mints a short-lived signed token whose audience is one service's name. That service verifies it locally against the keys keyring publishes.</p>
+      </div>
+      <div class="step">
+        <span class="step-number">03</span>
+        <h3>A usable credential, at the moment of use</h3>
+        <p>A service acting for a person presents its own service token and the person's token, and gets back the headers to attach: an OAuth token keyring has already refreshed, never the stored secret.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section container" id="api">
+    <div class="section-heading">
+      <p class="eyebrow signal">The API</p>
+      <h2>The HTTP contract, by what it is for.</h2>
+      <p>Interactive docs are at <code>/docs</code> on a running instance. The full contract, with a worked example, is in <a href="https://github.com/tochi-mba/Keyring-api/blob/main/docs/api.md">docs/api.md</a>.</p>
+    </div>
+    <div class="feature-grid">
+      <div class="feature-card"><span class="meta">/v1/auth</span><h3>Sessions and accounts</h3><p>Log in and out, redeem an invite, change or reset a password, and mint a service token.</p></div>
+      <div class="feature-card"><span class="meta">/v1/profiles</span><h3>Profiles and connections</h3><p>Named credential sets, the consent flow that connects a service, and whether each connection is still live.</p></div>
+      <div class="feature-card"><span class="meta">/v1/profiles/{name}/grants</span><h3>Offline grants</h3><p>Let one service act for you while you are not signed in, for the audiences you name.</p></div>
+      <div class="feature-card"><span class="meta">/v1/internal</span><h3>For services</h3><p>Usable credentials, form secrets and token exchange, each needing the calling service's own token as well as the person's.</p></div>
+      <div class="feature-card"><span class="meta">/v1/admin</span><h3>Administration</h3><p>Roles, invites, account status and the audit log, each route naming the permission it needs.</p></div>
+      <div class="feature-card"><span class="meta">/.well-known/jwks.json</span><h3>Published keys</h3><p>What every other service verifies a token against. <code>GET /healthy</code> and <code>GET /ready</code> need no token.</p></div>
+    </div>
+  </section>
+
+  <section class="section container" id="install">
+    <div class="section-heading">
+      <p class="eyebrow signal">Run it</p>
+      <h2>Three commands, and no sign-up page.</h2>
+      <p>You need Python 3.12 or newer and <a href="https://docs.astral.sh/uv/">uv</a>.</p>
+    </div>
+    <ol class="install-steps">
+      <li>Install.
+        <div class="command-row"><code>make install</code><button class="copy-button" type="button" data-copy="make install">Copy</button></div>
+      </li>
+      <li>Give it a master key and an admin token.
+        <div class="command-row"><code>export KEYRING_MASTER_KEY="$(python -c 'import base64,os; print(base64.b64encode(os.urandom(32)).decode())')" KEYRING_ADMIN_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"</code><button class="copy-button" type="button" data-copy="export KEYRING_MASTER_KEY=&quot;$(python -c &#x27;import base64,os; print(base64.b64encode(os.urandom(32)).decode())&#x27;)&quot; KEYRING_ADMIN_TOKEN=&quot;$(python -c &#x27;import secrets; print(secrets.token_urlsafe(32))&#x27;)&quot;">Copy</button></div>
+      </li>
+      <li>Serve it; the interactive docs are at <code>/docs</code>.
+        <div class="command-row"><code>make run</code><button class="copy-button" type="button" data-copy="make run">Copy</button></div>
+      </li>
+    </ol>
+    <p class="install-note">There is no sign-up. Mint an invite with the admin token and redeem it with a password; the <a href="https://github.com/tochi-mba/Keyring-api/blob/main/docs/api.md#worked-example">worked example</a> has both calls. <code>make check</code> is the gate: format, lint, strict types, layering contracts, and the suite at 100% branch coverage.</p>
+    <p id="copy-status" class="sr-only" aria-live="polite"></p>
+  </section>
+
+  <section class="section container" id="limits">
+    <div class="section-heading">
+      <p class="eyebrow signal">What it will not do</p>
+      <h2>The lines it holds, and the one you should know about.</h2>
+    </div>
+    <div class="faq">
+      <details open>
+        <summary>Can an administrator read my credentials?</summary>
+        <p>No. Administrators can invite, disable, delete, and see <strong>which</strong> services somebody has connected and whether each still works. No permission returns another account's credential, and that line is the point of the design.</p>
+      </details>
+      <details>
+        <summary>Can the server itself read them?</summary>
+        <p>Yes, and you should tell the people you onboard. Unattended token refresh needs to decrypt without the owner present, so there is no version of this that refreshes someone's token overnight and cannot read it.</p>
+      </details>
+      <details>
+        <summary>What does it store?</summary>
+        <p>Credentials and nothing else. Browser profiles, cookies, cache and downloaded files belong to the service that uses them.</p>
+      </details>
+      <details>
+        <summary>Can I run it without authentication?</summary>
+        <p>No. It has no unauthenticated mode, and it must sit behind TLS. Read the operations guide before exposing it.</p>
+      </details>
+    </div>
+  </section>
+
+  <section class="section container" id="docs">
+    <div class="section-heading">
+      <p class="eyebrow signal">Docs</p>
+      <h2>Written for the person who has to run it.</h2>
+    </div>
+    <div class="feature-grid">
+      <a class="feature-card link" href="https://github.com/tochi-mba/Keyring-api/blob/main/docs/api.md"><h3>The HTTP contract</h3><p>Every route, and a worked example from invite to credential.</p></a>
+      <a class="feature-card link" href="https://github.com/tochi-mba/Keyring-api/blob/main/docs/integration.md"><h3>Integrating with keyring</h3><p>Verifying tokens, reading credentials and calling siblings, from another service.</p></a>
+      <a class="feature-card link" href="https://github.com/tochi-mba/Keyring-api/blob/main/docs/operations.md"><h3>Operations</h3><p>Running it on the internet, and what that costs you.</p></a>
+      <a class="feature-card link" href="https://github.com/tochi-mba/Keyring-api/blob/main/docs/architecture.md"><h3>Architecture</h3><p>Ports, adapters, and why the layering is enforced.</p></a>
+      <a class="feature-card link" href="https://github.com/tochi-mba/Keyring-api/blob/main/docs/mcp.md"><h3>Assistant tools</h3><p>Which operations may ever become assistant tools.</p></a>
+      <a class="feature-card link" href="https://github.com/tochi-mba/Keyring-api/blob/main/docs/testing.md"><h3>Testing</h3><p>Where the tests concentrate, and why.</p></a>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="container footer-wrap">
+    <span>© <span id="year">2026</span> REX Technologies · Keyring</span>
+    <span>Part of the <a href="https://tochi-mba.github.io/LUCY-assistant/">LUCY family</a>. MIT licensed.</span>
+    <span class="footer-links">
+      <a href="https://github.com/tochi-mba/Keyring-api/blob/main/CHANGELOG.md">What's new <span aria-hidden="true">↗</span></a>
+      <a href="#top">Back to top <span aria-hidden="true">↑</span></a>
+    </span>
+  </div>
+</footer>
+<script src="app.js" defer></script>
+</body>
+</html>

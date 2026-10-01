@@ -1,5 +1,7 @@
 # keyring
 
+A REX Technologies product. Site: <https://tochi-mba.github.io/Keyring-api/>
+
 Accounts, profiles and credentials — the vault the rest of your services authenticate
 against.
 

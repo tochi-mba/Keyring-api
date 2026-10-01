@@ -80,6 +80,32 @@ class CreateGrantRequest(BaseModel):
     )
 
 
+class CreateDelegatedGrantRequest(BaseModel):
+    """Standing consent a service records while the person is present, for work that outlives
+    their request.
+
+    The service is the caller, proved by its own credential, and the account is the user
+    token's subject; neither can be named in the body, so a service can record consent only
+    for itself, and only for the person whose token it holds right now.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [{"audiences": ["github-api"], "ttl_seconds": 3600}]},
+    )
+    audiences: list[Audience] = Field(
+        min_length=1,
+        max_length=100,
+        description="Exact downstream audiences, all within the calling service's allowlist.",
+    )
+    ttl_seconds: int = Field(
+        default=3600,
+        ge=1,
+        le=31536000,
+        description="Requested lifetime, capped by the operator's offline grant limit.",
+    )
+
+
 class GrantResponse(BaseModel):
     """Inspectable consent metadata; the handle alone carries no authority."""
 

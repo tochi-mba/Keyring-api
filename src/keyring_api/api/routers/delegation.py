@@ -11,6 +11,7 @@ from keyring_api.api.routers.internal import USER_TOKEN_HEADER, ActingForDep, Se
 from keyring_api.api.routers.profiles import NO_SUCH_CONNECTION, render
 from keyring_api.api.schemas.common import Problem
 from keyring_api.api.schemas.delegation import (
+    CreateDelegatedGrantRequest,
     CreateGrantRequest,
     ExchangeRequest,
     ExchangeResponse,
@@ -201,4 +202,62 @@ async def delete_delegated_connection(
     removed = await container.credential_service.revoke_connection(account_id, name, connection)
     if not removed:
         raise ConnectionNotFoundError(NO_SUCH_CONNECTION)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/internal/profiles/{name}/grants",
+    operation_id="create_delegated_grant",
+    summary="Record standing consent for the calling service, while the person is present",
+    description=(
+        "Requires the calling service credential and a user token bound to that service, so "
+        "the person is present: the account comes only from that token, and the grant is for "
+        "the calling service only. Audiences must be within the service's allowlist and the "
+        "lifetime is capped by the offline grant limit. The person sees and can revoke it "
+        "with their own session like any other grant; the audit line names the service."
+    ),
+    status_code=status.HTTP_201_CREATED,
+    response_model=GrantResponse,
+    responses={401: _PROBLEM, 403: _PROBLEM, 404: _PROBLEM, 429: _PROBLEM},
+)
+async def create_delegated_grant(
+    name: str,
+    body: CreateDelegatedGrantRequest,
+    container: ContainerDep,
+    service: ServiceDep,
+    account_id: ActingForDep,
+) -> GrantResponse:
+    grant = await container.delegation_service.create(
+        account_id,
+        name,
+        service=service,
+        audiences=tuple(body.audiences),
+        ttl_seconds=body.ttl_seconds,
+        created_by=service,
+    )
+    return GrantResponse.model_validate(grant)
+
+
+@router.delete(
+    "/internal/profiles/{name}/grants/{grant_id}",
+    operation_id="revoke_delegated_grant",
+    summary="Withdraw standing consent the calling service holds",
+    description=(
+        "Requires the calling service credential and a user token bound to that service. "
+        "Revokes only a grant made to the calling service for the token's subject; a grant "
+        "held by another service, a foreign one and a missing one are all 404."
+    ),
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={401: _PROBLEM, 404: _PROBLEM},
+)
+async def revoke_delegated_grant(
+    name: str,
+    grant_id: str,
+    container: ContainerDep,
+    service: ServiceDep,
+    account_id: ActingForDep,
+) -> Response:
+    await container.delegation_service.revoke_for_service(
+        account_id, name, grant_id, service=service
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

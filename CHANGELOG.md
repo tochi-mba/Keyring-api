@@ -8,6 +8,12 @@ All notable changes to keyring-api are recorded here. The format follows
 
 ### Added
 
+- `POST /v1/internal/profiles/{name}/grants` (`create_delegated_grant`) lets a service record
+  standing consent for itself while the person is present, proved by their user token, so it
+  can finish work after they leave. It is an ordinary offline grant: the same allowlist and
+  lifetime cap, listed and revocable by the person, with an audit line naming the service.
+  `DELETE /v1/internal/profiles/{name}/grants/{grant_id}` (`revoke_delegated_grant`) withdraws
+  one the calling service holds; anything else is the same 404.
 - A GitHub Pages site at <https://tochi-mba.github.io/Keyring-api/>, in the REX ink/signal style: what Keyring is,
   its API, how to run it and what it will not do. `site/` is plain static HTML;
   `.github/workflows/pages.yml` publishes it after `scripts/check_site.py` has checked every

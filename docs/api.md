@@ -101,6 +101,8 @@ not affect you.
 | `describe_delegated_profile` | `GET /v1/internal/profiles/{name}` |
 | `authorize_delegated_connection` | `POST /v1/internal/profiles/{name}/connections/{connection}/authorize` |
 | `delete_delegated_connection` | `DELETE /v1/internal/profiles/{name}/connections/{connection}` |
+| `create_delegated_grant` | `POST /v1/internal/profiles/{name}/grants` |
+| `revoke_delegated_grant` | `DELETE /v1/internal/profiles/{name}/grants/{grant_id}` |
 | `exchange_user_token` | `POST /v1/internal/token-exchange` |
 
 All of them require the calling service's own token, `Authorization: Bearer <service
@@ -112,9 +114,19 @@ as its audience. The account comes from the user's token; no parameter names an 
 login form needs a password. That is exactly why it is behind two credentials, and why it
 must never be exposed as an assistant tool.
 
-The three `/v1/internal/profiles` routes let a service show a person their connections,
-start an OAuth consent, or disconnect one, on that person's behalf. They return status
-and a consent URL, never a stored value.
+The `/v1/internal/profiles` routes let a service show a person their connections, start an
+OAuth consent, or disconnect one, on that person's behalf. They return status and a consent
+URL, never a stored value.
+
+`create_delegated_grant` records standing consent for the **calling service only**, while
+the person is present: their user token is the proof, and the body names only `audiences`
+and `ttl_seconds` (default 3600), never a service or an account. It is the same grant
+`create_offline_grant` makes — the same allowlist, the same lifetime cap, listed and
+revocable by the person's own session — and its audit line names the service that recorded
+it. It exists so a service can arrange to finish work after the person leaves ("tell me when
+CI is green, then merge it") at the moment the person asks, rather than sending them to a
+consent screen. `revoke_delegated_grant` withdraws one the calling service holds; another
+service's grant, a foreign one and a missing one are the same 404.
 
 ### Token exchange and offline grants
 

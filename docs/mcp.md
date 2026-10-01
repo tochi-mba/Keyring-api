@@ -23,7 +23,7 @@ reason".
 | `login`, `change_password`, `redeem_password_reset` | Credential entry is a person's job. |
 | `put_api_key`, `put_password` | Same. A model should never be the thing that types a secret. |
 | Everything under `/v1/internal` | Service-to-service. Each route needs a service's own token, which a model must never hold, and `exchange_user_token` mints new authority. |
-| `create_offline_grant` | Consent for a service to act while the person is away is theirs to give, not a model's. |
+| `create_offline_grant`, `create_delegated_grant` | Consent for a service to act while the person is away is theirs to give, not a model's. A service records it only after its own approval step has asked the person. |
 
 The general shape: **a model may ask what identities exist; the service acting for it uses
 them.** That split is the whole reason `/v1/internal` requires both a service token and the

@@ -72,7 +72,7 @@ class DelegationService:
             msg = "no profile of that name"
             raise ProfileNotFoundError(msg)
 
-    async def create(
+    async def create(  # noqa: PLR0913 -- keyword-only: who, where, for whom, what, how long, by whom
         self,
         account_id: str,
         profile: str,
@@ -80,7 +80,14 @@ class DelegationService:
         service: str,
         audiences: tuple[str, ...],
         ttl_seconds: int,
+        created_by: str | None = None,
     ) -> OfflineGrant:
+        """Record expiring consent for one service.
+
+        ``created_by`` names the service that recorded it on the person's behalf, when it was
+        a service rather than the person's own session; the audit line says so, because "who
+        made this grant" is the first question anybody reviewing one asks.
+        """
         await self._profile(account_id, profile)
         self._allow(service, audiences)
         now = self._clock.now()
@@ -103,7 +110,8 @@ class DelegationService:
             AuditAction.DELEGATION_CREATED,
             actor_id=account_id,
             target_id=account_id,
-            detail=f"offline grant {grant.grant_id}",
+            detail=f"offline grant {grant.grant_id}"
+            + (f" created by {created_by}" if created_by is not None else ""),
         )
         return grant
 
@@ -121,6 +129,36 @@ class DelegationService:
             actor_id=account_id,
             target_id=account_id,
             detail=f"offline grant {grant_id}",
+        )
+
+    async def revoke_for_service(
+        self, account_id: str, profile: str, grant_id: str, *, service: str
+    ) -> None:
+        """Revoke a grant a service holds, on that service's own request.
+
+        A service may withdraw only consent given to it: another service's grant, like a
+        missing one, is "no offline grant with that id", so a caller cannot learn that a grant
+        it does not hold exists.
+        """
+        await self._profile(account_id, profile)
+        held = next(
+            (
+                grant
+                for grant in await self._store.list_for_profile(account_id, profile)
+                if grant.grant_id == grant_id and grant.service == service
+            ),
+            None,
+        )
+        if held is None or not await self._store.revoke(
+            account_id, profile, grant_id, now=self._clock.now()
+        ):
+            msg = "no offline grant with that id"
+            raise ProfileNotFoundError(msg)
+        await self._audit.record(
+            AuditAction.DELEGATION_REVOKED,
+            actor_id=account_id,
+            target_id=account_id,
+            detail=f"offline grant {grant_id} revoked by {service}",
         )
 
     async def exchange(

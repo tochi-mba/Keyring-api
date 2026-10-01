@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://tochi-mba.github.io/Keyring-api/sitemap.xml

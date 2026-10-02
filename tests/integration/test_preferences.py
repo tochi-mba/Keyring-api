@@ -33,9 +33,9 @@ class RecordingFake(FakeSettingsClient):
         super().__init__()
         self.user_tokens: list[str] = []
 
-    async def resolve(self, namespace: str, *, user_token: str) -> Any:
+    async def resolve(self, namespace: str, *, user_token: str, profile: str | None = None) -> Any:
         self.user_tokens.append(user_token)
-        return await super().resolve(namespace, user_token=user_token)
+        return await super().resolve(namespace, user_token=user_token, profile=profile)
 
 
 @pytest.fixture

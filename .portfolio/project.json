@@ -1,0 +1,19 @@
+{
+  "$schema": "https://tochi-mba.github.io/schema/project.schema.json",
+  "slug": "keyring",
+  "name": "keyring",
+  "tagline": "Accounts, profiles and credentials: the vault the rest of the family authenticates against.",
+  "description": "One person logs in once. Their profiles hold the credentials for third-party services, and any service that needs one asks keyring for a usable credential at the moment it needs it: a refreshed OAuth token, an API key, or the fields for a login form. No other service stores a secret, and no endpoint ever hands a stored secret back out.",
+  "highlights": [
+    "OAuth consent flows and token refresh on behalf of a person",
+    "Internal credential resolution for services acting for a person",
+    "Master-key encryption at rest"
+  ],
+  "stack": ["Python 3.12", "FastAPI", "OAuth 2"],
+  "category": "service",
+  "family": "lucy",
+  "role": "vault",
+  "status": "active",
+  "order": 100,
+  "display": true
+}

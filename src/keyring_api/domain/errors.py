@@ -173,6 +173,15 @@ class RateLimitedError(DomainError):
         self.retry_after_seconds = retry_after_seconds
 
 
+class ReauthenticationRequiredError(DomainError):
+    """This account asks for its password before a stored credential changes, and none came.
+
+    403 rather than 401: the session or the service's tokens were accepted, and a client
+    that read a 401 as "sign in again" would throw away a session that still works. Only
+    ever raised about the caller's own account, so it says nothing about anybody else's.
+    """
+
+
 class PreferencesUnavailableError(DomainError):
     """A person's settings were needed and could not be read honestly.
 

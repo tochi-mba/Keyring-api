@@ -51,7 +51,7 @@ async def complete_authorization(
     state: str, code: str, container: ContainerDep
 ) -> ConnectionResponse:
     """Exchange the authorization code and store the resulting credential."""
-    connection = await container.credential_service.complete_authorization(state=state, code=code)
+    connection = await container.credential_changes.complete_authorization(state=state, code=code)
     return render_connection(connection)
 
 

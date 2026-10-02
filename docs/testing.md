@@ -16,6 +16,7 @@ can go wrong in this service goes wrong silently.
 | **Tokens** | Single use, TTL expiry through a fake clock, tampering rejected, hashed at rest, constant-time compare. |
 | **Delegation** | An exchanged token has the same subject, one allowlisted audience, and no longer a life than its source. A revoked or foreign grant, a token for another audience, or a disabled account cannot exchange. |
 | **Session lifecycle** | Revoke one, revoke all, every session dies on password change and on reset. |
+| **Credential changes** | Every route that adds, replaces or removes a credential, with re-authentication on, off and unknowable, with the right password, a wrong one and none, and as a service — including a service presenting its tokens and a password on the person's routes. A refused change leaves the vault as it was; a notice never names or carries the credential. |
 | **Secret handling** | No secret in any response — walked over every response schema in the OpenAPI document, so a field added later is caught here. None in logs, on any path including the failure paths. Files 0600. |
 | **Concurrency** | Two simultaneous demotions of the last two owners must leave one. Two callbacks racing one OAuth state: exactly one wins. |
 | **Property-based** | Token entropy and uniqueness, encrypt/decrypt round-trip, normalization idempotence. |

@@ -187,6 +187,23 @@ If settings-api cannot be reached, the login goes ahead with this deployment's v
 it refuses keyring's token, the login fails, so a missing grant shows up at once rather
 than hiding behind defaults.
 
+The same read covers four more settings. For somebody who has chosen nothing they are what
+keyring did before -- no notices, no second password -- provided settings-api's catalogue
+defaults say so: `email_notifications` true, the other three false. A settings-api whose
+catalogue still defaults those three to true will apply them to everybody.
+
+- `require_reauth_for_credential_changes`: a credential change needs the account password
+  again (`current_password`), and a service acting for that person is refused. It
+  *refuses* rather than falling back, so while settings-api cannot be reached a credential
+  change without the password answers 503; with the right password it goes ahead. Logins
+  are unaffected. Expect a person who turns it on to be unable to connect or disconnect
+  anything through an assistant, by design.
+- `notify_on_new_session` and `notify_on_credential_change`, both under
+  `email_notifications`: mail to the account's own address. They need the mail backend
+  configured (see [Mail](#mail) above); with mail disabled they are silently not sent,
+  exactly like a reset link. During an outage they land on settings-api's declared
+  fallback, or, if keyring has never had an answer, on off.
+
 ### What to tell them, in plain words
 
 Have this conversation during onboarding rather than after an incident:

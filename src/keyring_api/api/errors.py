@@ -44,6 +44,7 @@ from keyring_api.domain.errors import (
     ProfileExistsError,
     ProfileNotFoundError,
     RateLimitedError,
+    ReauthenticationRequiredError,
     RoleExistsError,
     RoleInUseError,
     RoleNotFoundError,
@@ -86,6 +87,9 @@ _DOMAIN_STATUS: dict[type[Exception], int] = {
     # route checks its permission before looking the target up, so a caller who lacks
     # the permission gets the same 403 whether or not the target exists.
     InsufficientPermissionError: status.HTTP_403_FORBIDDEN,
+    # 403, not 401: the session was accepted. It is only ever raised about the caller's
+    # own account, after the account is known, so it confirms nothing about anyone else.
+    ReauthenticationRequiredError: status.HTTP_403_FORBIDDEN,
     InvalidRoleError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     RoleNotFoundError: status.HTTP_404_NOT_FOUND,
     RoleExistsError: status.HTTP_409_CONFLICT,

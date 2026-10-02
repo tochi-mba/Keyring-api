@@ -19,16 +19,46 @@ describe the account behind it to whoever is reading that mailbox.
 
 A link is only included when a redemption URL is configured. With no web UI, inventing a
 link to a page that does not exist is worse than asking somebody to copy a string.
+
+The two notices -- a new session, a credential change -- carry no link and no token at
+all. A security notice with a button in it is the exact shape of the phishing it warns
+about, and there is nothing to click: the remedy is a password change, made wherever the
+person normally signs in. Nor do they name the service or profile that changed, by the
+third rule.
 """
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 
+from keyring_api.domain.changes import ChangeOrigin, CredentialChange
 from keyring_api.notifications.base import EmailMessage
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 INVITE_SUBJECT = "You have been invited to keyring"
 RESET_SUBJECT = "Reset your keyring password"
+NEW_SESSION_SUBJECT = "New sign-in to your keyring account"
+CREDENTIAL_CHANGE_SUBJECT = "A stored credential changed in your keyring account"
+
+_CHANGED = {
+    CredentialChange.STORED: "added or replaced",
+    CredentialChange.REMOVED: "removed",
+}
+
+_BY = {
+    ChangeOrigin.PERSON: "from a signed-in session on your account",
+    ChangeOrigin.SERVICE: "by a service acting for you with a token you gave it",
+    ChangeOrigin.PROVIDER: "when an authorization finished at the service's own sign-in page",
+    ChangeOrigin.ADMINISTRATOR: "by an administrator of this keyring server",
+}
+
+_IF_NOT_YOU = """\
+If that was not you, somebody else can use your account. Change your keyring password
+now: that signs out every other session, including theirs. If you cannot sign in, ask
+whoever runs this keyring server to reset it."""
 
 
 def invite_message(
@@ -68,6 +98,56 @@ If you did not ask for this, ignore this message. Your password has not changed 
 code above expires unused. Nobody needs to do anything.
 """
     return EmailMessage(to_address=to_address, subject=RESET_SUBJECT, body=body)
+
+
+def new_session_message(*, to_address: str, at: datetime) -> EmailMessage:
+    """The notice that somebody just signed in to this account.
+
+    When, and nothing else: no session id, no token, no address the sign-in came from --
+    behind a proxy that is the proxy's address, and a wrong clue is worse than none.
+    """
+    body = f"""\
+Your keyring account was signed in to at {_moment(at)}.
+
+If that was you, there is nothing to do.
+
+{_IF_NOT_YOU}
+
+You get this because new sign-in notices are on for this account. You can turn them
+off in your settings.
+"""
+    return EmailMessage(to_address=to_address, subject=NEW_SESSION_SUBJECT, body=body)
+
+
+def credential_change_message(
+    *, to_address: str, change: CredentialChange, origin: ChangeOrigin, at: datetime
+) -> EmailMessage:
+    """The notice that a stored credential was added, replaced or removed.
+
+    Says what kind of change and who asked for it, never which credential: whoever reads
+    this mailbox would otherwise learn what the account holds. The person's own list of
+    connections answers "which" for somebody who can sign in.
+    """
+    body = f"""\
+A credential stored in your keyring account was {_CHANGED[change]} at {_moment(at)},
+{_BY[origin]}.
+
+This message does not say which one. Sign in to keyring to see your connections as they
+are now.
+
+If that was you, there is nothing to do.
+
+{_IF_NOT_YOU} Then check your connections.
+
+You get this because credential-change notices are on for this account. You can turn
+them off in your settings.
+"""
+    return EmailMessage(to_address=to_address, subject=CREDENTIAL_CHANGE_SUBJECT, body=body)
+
+
+def _moment(at: datetime) -> str:
+    """A time a person can read, to the minute, in UTC so it means one thing everywhere."""
+    return at.strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _action(link_base_url: str, *, path: str, token: str, fallback: str) -> str:

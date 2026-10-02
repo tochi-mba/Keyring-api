@@ -275,12 +275,30 @@ class CredentialService:
             InvalidOAuthStateError: unknown, expired, or already used.
             CredentialUnavailableError: the provider refused the exchange.
         """
+        return await self.finish_authorization(await self.redeem_authorization(state), code=code)
+
+    async def redeem_authorization(self, state: str) -> FlowBinding:
+        """Consume a callback's state and return what the flow was bound to.
+
+        The first half of :meth:`complete_authorization`, public so a caller can learn whose
+        flow this is -- to read that person's settings -- before anything is stored.
+
+        Raises:
+            InvalidOAuthStateError: unknown, expired, or already used.
+        """
         flow = await self._states.redeem(state)
         if flow is None:
             msg = "this authorization link is invalid or has expired"
             raise InvalidOAuthStateError(msg)
+        return flow.binding
 
-        binding = flow.binding
+    async def finish_authorization(self, binding: FlowBinding, *, code: str) -> Connection:
+        """Exchange the code for the flow ``binding`` names, and store what comes back.
+
+        Raises:
+            InvalidOAuthStateError: the profile went away during the consent.
+            CredentialUnavailableError: the provider refused the exchange.
+        """
         profile = await self._profiles.get(binding.account_id, binding.profile)
         if profile is None:
             # The profile was deleted while the person was consenting at the provider.

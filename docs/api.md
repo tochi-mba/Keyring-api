@@ -92,6 +92,33 @@ stored value, and a contract test walks every response schema to keep it that wa
 Profile names are scoped to your account, so "personal" being taken by somebody else does
 not affect you.
 
+**Re-entering the password.** If your account has `keyring.require_reauth_for_credential_changes`
+on in settings-api, every route that adds, replaces or removes a credential needs your
+account password again as `current_password`: a field in the body of `put_api_key` and
+`put_password`, and the whole, optional body (`{"current_password": "..."}`) of
+`authorize_connection`, `delete_connection` and `delete_profile`. Deleting a profile with no
+connections is not a credential change and is not asked. The answers:
+
+| Situation | Response |
+| --- | --- |
+| Setting on, no `current_password` | 403 |
+| `current_password` sent and wrong (setting on or off) | 401, and it counts toward the lockout |
+| settings-api cannot say, no `current_password` | 503 — the setting is never guessed |
+| settings-api cannot say, right `current_password` | goes ahead |
+
+The OAuth callback is not asked: the check is at `authorize_connection`, where you are present.
+An administrator deleting somebody else's profile (`delete_account_profile`) is not asked
+either -- they do not have the password, and the audit log holds them to account -- but one
+deleting their *own* profile there is held to their own setting: 403 with it on, 503 while
+settings-api cannot say, and `delete_profile` is the route that takes the password.
+[ADR-0014](adr/0014-reauthentication-per-request.md) says why it is per request.
+
+**Notices.** With `keyring.notify_on_credential_change` on (and `keyring.email_notifications`
+not off), the account's address is mailed after a credential is added, replaced or removed,
+by any route here, a service, the callback, or an administrator. With
+`keyring.notify_on_new_session`, every login is. Neither notice names a credential, a
+service or a profile, and neither carries a link or a token.
+
 ### Service-to-service
 
 | Operation | Route |
@@ -116,7 +143,10 @@ must never be exposed as an assistant tool.
 
 The `/v1/internal/profiles` routes let a service show a person their connections, start an
 OAuth consent, or disconnect one, on that person's behalf. They return status and a consent
-URL, never a stored value.
+URL, never a stored value. A service never has the person's password, so for a person with
+`keyring.require_reauth_for_credential_changes` on, `authorize_delegated_connection` and
+`delete_delegated_connection` answer **403** and the person must do it with their own
+session; while settings-api cannot say whether it is on, they answer **503**.
 
 `create_delegated_grant` records standing consent for the **calling service only**, while
 the person is present: their user token is the proof, and the body names only `audiences`

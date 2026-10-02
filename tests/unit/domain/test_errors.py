@@ -11,6 +11,7 @@ from keyring_api.domain.errors import (
     DomainError,
     PreferencesUnavailableError,
     RateLimitedError,
+    ReauthenticationRequiredError,
     VaultSealedError,
 )
 
@@ -37,6 +38,16 @@ def test_a_preferences_failure_is_not_an_authentication_failure() -> None:
     # as 401 would send the person through a login that cannot fix it.
     assert not issubclass(PreferencesUnavailableError, AuthenticationError)
     assert issubclass(PreferencesUnavailableError, DomainError)
+
+
+def test_asking_for_the_password_again_is_not_an_authentication_failure() -> None:
+    """The bug, named: a 401 here would read as "your session is dead" to every client.
+
+    The session was accepted; the account simply asks for more before a credential changes.
+    A client that signed the person out over it would throw away a session that works.
+    """
+    assert not issubclass(ReauthenticationRequiredError, AuthenticationError)
+    assert issubclass(ReauthenticationRequiredError, DomainError)
 
 
 def test_a_rate_limit_carries_how_long_to_wait() -> None:

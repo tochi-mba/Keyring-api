@@ -8,6 +8,37 @@ All notable changes to keyring-api are recorded here. The format follows
 
 ### Added
 
+- **Per-person notices and re-authentication for credential changes.** With settings-api
+  configured, keyring now reads four more `keyring` settings for the person a request is
+  for. Somebody who has chosen nothing gets exactly what keyring did before -- no notices
+  and no second password prompt -- once settings-api's catalogue defaults the three
+  subordinate settings to false, which is a settings-api change made separately; until
+  then its defaults of true apply to everybody.
+  - `keyring.require_reauth_for_credential_changes`: on, adding, replacing or removing a
+    stored credential needs the account password again, sent as `current_password` --
+    in the body of `put_api_key` and `put_password`, or as the whole (optional) body of
+    `authorize_connection`, `delete_connection` and `delete_profile`. Without it the
+    answer is 403. A service cannot give it, so `authorize_delegated_connection` and
+    `delete_delegated_connection` are refused for that person. A password that is sent
+    is always checked, and a wrong one counts toward the account lockout like a failed
+    login. The entry refuses rather than falling back: while settings-api cannot say,
+    a change without the password is a 503, and one with the right password goes ahead
+    because it satisfies the setting either way. A login never reads it, so an outage
+    cannot fail a login over it. An administrator deleting somebody else's profile is
+    not asked; one deleting their own through `delete_account_profile` is held to their
+    own setting, and gets a 403 pointing at `delete_profile`, the route that takes the
+    password -- otherwise a stolen owner's session could remove credentials there
+    unchallenged.
+  - `keyring.notify_on_credential_change`: on, the owner is mailed after a credential is
+    added, replaced or removed -- by their session, a service, an OAuth consent landing at
+    the callback, or an administrator. The notice says what kind of change, when and by
+    whom, never which credential and never any part of one. A token refresh is not a
+    change.
+  - `keyring.notify_on_new_session`: on, every login is mailed to the owner, with the
+    time and nothing else -- no token, no session id.
+  - `keyring.email_notifications`: the master switch over both notices. Invites and
+    password resets are not notices and are unaffected.
+
 - `POST /v1/internal/profiles/{name}/grants` (`create_delegated_grant`) lets a service record
   standing consent for itself while the person is present, proved by their user token, so it
   can finish work after they leave. It is an ordinary offline grant: the same allowlist and

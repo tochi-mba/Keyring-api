@@ -9,11 +9,44 @@ the suite rather than by whoever is reading the logs.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from keyring_api.api.schemas.delegation import GrantResponse
+from keyring_api.domain.accounts import MAX_PASSWORD_LENGTH
 from keyring_api.domain.profiles import ConnectionStatus, CredentialKind
+
+CURRENT_PASSWORD_DESCRIPTION = (
+    "Your keyring account password, entered again. "  # noqa: S105 -- a description
+    "Needed only if your account asks for it before a stored credential changes "
+    "(the keyring.require_reauth_for_credential_changes setting); checked whenever "
+    "it is sent. Never stored with the credential."
+)
+
+
+def current_password_field() -> Any:
+    """The optional re-entered password every credential-changing request may carry."""
+    return Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_PASSWORD_LENGTH,
+        description=CURRENT_PASSWORD_DESCRIPTION,
+    )
+
+
+class ConfirmPasswordRequest(BaseModel):
+    """The password, entered again, for a credential change whose route has no other body.
+
+    Optional as a whole: send it only when your account asks for re-authentication.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [{"current_password": "a long passphrase"}]},
+    )
+
+    current_password: str | None = current_password_field()
 
 
 class CreateProfileRequest(BaseModel):
@@ -172,6 +205,7 @@ class PutApiKeyRequest(BaseModel):
     query_name: str = Field(
         default="api_key", max_length=64, description="Parameter name when `in_query` is set."
     )
+    current_password: str | None = current_password_field()
 
 
 class PutPasswordRequest(BaseModel):
@@ -202,6 +236,7 @@ class PutPasswordRequest(BaseModel):
             "you want."
         ),
     )
+    current_password: str | None = current_password_field()
 
 
 class AuthorizationResponse(BaseModel):

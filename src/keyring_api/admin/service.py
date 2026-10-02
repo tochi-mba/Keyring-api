@@ -37,12 +37,14 @@ from typing import TYPE_CHECKING
 
 from keyring_api.audit.log import BREAK_GLASS_ACTOR, AuditAction
 from keyring_api.core.logging import get_logger
+from keyring_api.credentials.changes import Requester
 from keyring_api.domain.accounts import AccountStatus
 from keyring_api.domain.errors import (
     AccountNotFoundError,
     InsufficientPermissionError,
     InvalidRoleError,
     ProfileNotFoundError,
+    ReauthenticationRequiredError,
     RoleExistsError,
     RoleNotFoundError,
 )
@@ -64,6 +66,7 @@ if TYPE_CHECKING:
     from keyring_api.accounts.store import AccountStore
     from keyring_api.audit.log import AuditEntry, AuditLog
     from keyring_api.core.clock import Clock
+    from keyring_api.credentials.changes import CredentialChanges
     from keyring_api.credentials.service import CredentialService
     from keyring_api.domain.accounts import Account
     from keyring_api.domain.profiles import Profile
@@ -72,6 +75,11 @@ logger = get_logger(__name__)
 
 NO_SUCH_ACCOUNT = "no account with that id"
 NO_SUCH_PROFILE = "no profile by that name"
+OWN_PROFILE_NEEDS_PASSWORD = (
+    "your account asks for its password before a stored credential changes, and this "  # noqa: S105
+    "administrative route cannot take it: delete your own profile with delete_profile, "
+    "sending current_password"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,7 +118,7 @@ class Actor:
 class AdminService:
     """Administrative operations over accounts and roles."""
 
-    def __init__(  # noqa: PLR0913 -- six injected collaborators; see AccountService
+    def __init__(  # noqa: PLR0913 -- seven injected collaborators; see AccountService
         self,
         *,
         accounts: AccountStore,
@@ -118,6 +126,7 @@ class AdminService:
         audit: AuditLog,
         account_service: AccountService,
         credential_service: CredentialService,
+        credential_changes: CredentialChanges,
         clock: Clock,
     ) -> None:
         self._accounts = accounts
@@ -125,6 +134,7 @@ class AdminService:
         self._audit = audit
         self._account_service = account_service
         self._credential_service = credential_service
+        self._credential_changes = credential_changes
         self._clock = clock
 
     # -- Reading -----------------------------------------------------------------------
@@ -256,11 +266,35 @@ class AdminService:
 
         Destroys, never reads. That asymmetry is deliberate: cleaning up after somebody
         who has left should not require the ability to use what they left behind.
+
+        Not asked for the owner's password -- the administrator does not have it, and the
+        permission and the audit entry are what hold them to account -- but announced to
+        the owner like any other removal, if they asked to hear about one.
+
+        Except on the administrator's own account. That is a change to their own
+        credentials, and their own re-authentication setting holds: without this, a
+        stolen owner's session would remove every credential through here without the
+        password the profile routes ask for. This route has no password to offer, so with
+        the setting on the answer is to use ``delete_profile``.
+
+        Raises:
+            ReauthenticationRequiredError: the actor's own profile, and their account asks
+                for its password before a credential changes.
         """
         actor.require(Permission.PROFILES_DELETE_ANY)
-        await self._check_can_act_on(actor, await self._require_account(account_id))
+        target = await self._require_account(account_id)
+        await self._check_can_act_on(actor, target)
 
-        if not await self._credential_service.delete_profile(account_id, name):
+        own = target.account_id == actor.account_id
+        try:
+            removed = await self._credential_changes.remove_profile(
+                account_id,
+                name,
+                requester=Requester.person(None) if own else Requester.administrator(),
+            )
+        except ReauthenticationRequiredError as error:
+            raise ReauthenticationRequiredError(OWN_PROFILE_NEEDS_PASSWORD) from error
+        if not removed:
             raise ProfileNotFoundError(NO_SUCH_PROFILE)
 
         await self._record(

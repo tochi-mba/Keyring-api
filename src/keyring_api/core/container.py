@@ -28,6 +28,7 @@ from keyring_api.audit.sql_log import SqlAuditLog
 from keyring_api.core.clock import SystemClock
 from keyring_api.core.logging import get_logger
 from keyring_api.core.preferences import build_preference_source
+from keyring_api.credentials.changes import CredentialChanges
 from keyring_api.credentials.delegation import DelegationService
 from keyring_api.credentials.oauth_client import HttpTokenEndpoint
 from keyring_api.credentials.providers import load_providers
@@ -80,6 +81,7 @@ class Container:
     audit: AuditLog
     account_service: AccountService
     credential_service: CredentialService
+    credential_changes: CredentialChanges
     delegation_service: DelegationService
     admin_service: AdminService
     signer: TokenSigner
@@ -163,6 +165,16 @@ class Container:
                 clock=clock,
                 settings=settings,
             )
+            # Every credential change a person or a service asks for goes through this,
+            # so the owner's re-authentication and notice settings hold on every route.
+            credential_changes = CredentialChanges(
+                credentials=credential_service,
+                accounts=accounts,
+                account_service=account_service,
+                preferences=chosen,
+                outbox=outbox,
+                clock=clock,
+            )
 
             # The same constant-time comparison every consuming service runs on its own internal
             # surface, so "which service is calling" has one implementation in the family.
@@ -189,6 +201,7 @@ class Container:
                 audit=audit,
                 account_service=account_service,
                 credential_service=credential_service,
+                credential_changes=credential_changes,
                 delegation_service=DelegationService(
                     store=SqlDelegationStore(database),
                     profiles=profiles,
@@ -204,6 +217,7 @@ class Container:
                     audit=audit,
                     account_service=account_service,
                     credential_service=credential_service,
+                    credential_changes=credential_changes,
                     clock=clock,
                 ),
                 preferences=chosen,

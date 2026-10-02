@@ -19,11 +19,18 @@ from keyring_api.api.schemas.delegation import (
     GrantResponse,
 )
 from keyring_api.api.schemas.profiles import AuthorizationResponse, ProfileResponse
+from keyring_api.credentials.changes import Requester
 from keyring_api.domain.accounts import AccountStatus
 from keyring_api.domain.errors import AuthenticationError, ConnectionNotFoundError
 
 router = APIRouter(prefix="/v1", tags=["delegation"])
 _PROBLEM = {"model": Problem}
+
+SERVICE_REAUTH_NOTE = (
+    " Responds 403 if the person's account asks for its password before a stored "
+    "credential changes: a service cannot give it, so the person must do this with their "
+    "own session. 503 if their settings cannot be read."
+)
 
 
 @router.post(
@@ -159,10 +166,10 @@ async def describe_delegated_profile(
     description=(
         "Requires the calling service credential and a user token bound to that service. "
         "The account comes only from the signed user token. Returns a short-lived provider "
-        "URL and never returns or accepts credential material."
+        "URL and never returns or accepts credential material." + SERVICE_REAUTH_NOTE
     ),
     response_model=AuthorizationResponse,
-    responses={401: _PROBLEM, 404: _PROBLEM, 429: _PROBLEM, 503: _PROBLEM},
+    responses={401: _PROBLEM, 403: _PROBLEM, 404: _PROBLEM, 429: _PROBLEM, 503: _PROBLEM},
 )
 async def authorize_delegated_connection(
     name: str,
@@ -170,11 +177,12 @@ async def authorize_delegated_connection(
     container: ContainerDep,
     account_id: ActingForDep,
 ) -> AuthorizationResponse:
-    authorization = await container.credential_service.begin_authorization(
+    authorization = await container.credential_changes.begin_authorization(
         account_id,
         name,
         connection,
         redirect_uri=container.settings.oauth_redirect_uri,
+        requester=Requester.service(),
     )
     return AuthorizationResponse(
         authorization_url=authorization.authorization_url,
@@ -189,9 +197,10 @@ async def authorize_delegated_connection(
     description=(
         "Requires the calling service credential and a user token bound to that service. "
         "Deletes only the named profile connection belonging to the token subject."
+        + SERVICE_REAUTH_NOTE
     ),
     status_code=status.HTTP_204_NO_CONTENT,
-    responses={401: _PROBLEM, 404: _PROBLEM},
+    responses={401: _PROBLEM, 403: _PROBLEM, 404: _PROBLEM, 503: _PROBLEM},
 )
 async def delete_delegated_connection(
     name: str,
@@ -199,7 +208,9 @@ async def delete_delegated_connection(
     container: ContainerDep,
     account_id: ActingForDep,
 ) -> Response:
-    removed = await container.credential_service.revoke_connection(account_id, name, connection)
+    removed = await container.credential_changes.remove_connection(
+        account_id, name, connection, requester=Requester.service()
+    )
     if not removed:
         raise ConnectionNotFoundError(NO_SUCH_CONNECTION)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

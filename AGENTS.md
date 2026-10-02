@@ -61,7 +61,8 @@ src/keyring_api/
                  JWT signing
   profiles/      ProfileStore and DelegationStore ports + SQL adapters
   credentials/   the four consumption ports, the three credential kinds, OAuth, TOTP,
-                 token exchange and offline grants
+                 token exchange and offline grants, and changes.py: the owner's
+                 re-authentication and notice settings around every credential change
   admin/         administrative operations over accounts, roles and others' profiles
   api/           FastAPI app, routers, wire schemas, problem+json errors, middleware
 ```

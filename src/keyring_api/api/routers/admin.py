@@ -424,10 +424,17 @@ async def list_account_profiles(
     description=(
         "For cleaning up after somebody who has left. Destroys the profile and the "
         "credentials in it; it does not read them, and cleaning up after someone should "
-        "not require the ability to use what they left behind."
+        "not require the ability to use what they left behind. On your own account it is "
+        "a change to your own credentials: if your account asks for its password before "
+        "one changes, this answers 403 and delete_profile is the route to use. 503 if the "
+        "account's settings cannot be read."
     ),
     status_code=status.HTTP_204_NO_CONTENT,
-    responses={**_DENIED, **_NOT_FOUND},
+    responses={
+        **_DENIED,
+        **_NOT_FOUND,
+        status.HTTP_503_SERVICE_UNAVAILABLE: _PROBLEM,
+    },
 )
 async def delete_account_profile(
     account_id: str, name: str, container: ContainerDep, actor: ActorDep

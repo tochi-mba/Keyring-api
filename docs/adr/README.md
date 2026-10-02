@@ -18,3 +18,4 @@ decided, what it cost, and what would make us change our minds.
 | [0011](0011-email-delivery.md) | Email delivery, behind a port, disabled by default |
 | [0012](0012-sqlite.md) | SQLite, one file, behind the same ports |
 | [0013](0013-single-process.md) | One process, and the three things that say so |
+| [0014](0014-reauthentication-per-request.md) | Re-authentication for credential changes is per request, and a service cannot pass it |

@@ -178,7 +178,10 @@ has the full contract.
 A service that lets a person manage connections through it uses the three
 `/v1/internal/profiles/{name}` routes, with the same two headers as credential
 resolution. They report status and start or remove a connection; they never return a
-stored value.
+stored value. Starting or removing one answers 403 for a person who has
+`keyring.require_reauth_for_credential_changes` on, because that needs their password and a
+service never has it: send them to do it with their own session. It answers 503 while
+settings-api cannot say whether the setting is on.
 
 ## Tests and persistence
 

@@ -79,6 +79,11 @@ Tell the people you onboard.
 A stored site password is not revocable by you — only by that person changing it at the
 site. Prefer OAuth wherever a service offers it.
 
+With settings-api connected, each person can have keyring ask for their password again
+before any credential is added, replaced or removed — which no service acting for them can
+satisfy — and to mail them about new sign-ins and credential changes. All of it is off until
+they choose it ([docs/api.md](docs/api.md#profiles-and-connections)).
+
 Everything lives in one SQLite file ([ADR-0012](docs/adr/0012-sqlite.md)) -- accounts,
 sessions, profiles, roles, the audit log, and the encrypted credential material. Back it up
 with `VACUUM INTO` rather than `cp`, keep the master key somewhere else, and try a restore

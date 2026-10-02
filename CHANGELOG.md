@@ -45,6 +45,8 @@ All notable changes to keyring-api are recorded here. The format follows
 
 ### Changed
 
+- settings-client moves from v0.1.0 to **v0.4.1**. Every `keyring` setting is
+  account-scoped, so keyring's resolve names no profile; a test asserts it.
 - **Breaking:** the floor is now **Python 3.12** (CI runs 3.12 and 3.13).
   `.python-version`, `requires-python`, ruff's `target-version`, mypy's `python_version`,
   the Docker base image and the pre-commit interpreter all moved together, and `uv.lock`

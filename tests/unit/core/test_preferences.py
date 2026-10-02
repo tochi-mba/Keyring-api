@@ -209,6 +209,19 @@ class TestAPersonsChoices:
         assert preferences.session_ttl_seconds == 14 * SECONDS_PER_DAY
         assert preferences.session_absolute_ttl_seconds == preferences.session_ttl_seconds
 
+    async def test_the_read_names_no_profile_because_every_key_is_the_accounts(self) -> None:
+        """The new behaviour, named: one answer per account, never per credential set.
+
+        Every ``keyring`` entry is account-scoped. A keyring profile is a credential set
+        inside the account, and a session limit or a protection that one profile could
+        loosen would be one any profile could opt out of.
+        """
+        client = FakeSettingsClient()
+
+        await reading(client).for_account(ACCOUNT_ID)
+
+        assert client.asked == [(NAMESPACE, None)]
+
 
 class TestWhenSettingsApiCannotBeReached:
     async def test_never_having_answered_leaves_the_configuration(self) -> None:

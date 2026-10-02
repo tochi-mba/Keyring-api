@@ -7,19 +7,25 @@ profile. A name somebody else owns answers 404, identically to a name nobody own
 One rule governs the whole module: **values go in, status comes out.** Reads report
 which connections exist and whether each is usable; no endpoint here returns a stored
 secret, and a contract test walks every response schema to keep it that way.
+
+Every route that adds, replaces or removes a credential goes through
+:class:`~keyring_api.credentials.changes.CredentialChanges`, which applies the owner's
+re-authentication and notice settings. Each takes an optional ``current_password``: in the
+body it already has, or as the whole body of a route that had none.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Body, Response, status
 
 from keyring_api.api.dependencies import ContainerDep, CurrentAccountDep
 from keyring_api.api.schemas.common import Problem
 from keyring_api.api.schemas.delegation import GrantResponse
 from keyring_api.api.schemas.profiles import (
     AuthorizationResponse,
+    ConfirmPasswordRequest,
     ConnectionResponse,
     CreateProfileRequest,
     ProfileListResponse,
@@ -27,7 +33,9 @@ from keyring_api.api.schemas.profiles import (
     PutApiKeyRequest,
     PutPasswordRequest,
 )
-from keyring_api.domain.errors import ConnectionNotFoundError
+from keyring_api.credentials.changes import Requester
+from keyring_api.credentials.service import NO_SUCH_PROFILE
+from keyring_api.domain.errors import ConnectionNotFoundError, ProfileNotFoundError
 from keyring_api.domain.profiles import Connection, CredentialKind, Profile
 
 router = APIRouter(prefix="/v1/profiles", tags=["profiles"])
@@ -49,9 +57,49 @@ _NOT_FOUND: dict[int | str, dict[str, Any]] = {
 _SEALED: dict[int | str, dict[str, Any]] = {
     status.HTTP_503_SERVICE_UNAVAILABLE: {
         "model": Problem,
-        "description": "The vault is sealed -- no master key is configured.",
+        "description": (
+            "The vault is sealed -- no master key is configured -- or your settings could "
+            "not be read and the change cannot go ahead without them."
+        ),
     }
 }
+_REAUTH: dict[int | str, dict[str, Any]] = {
+    status.HTTP_401_UNAUTHORIZED: {
+        "model": Problem,
+        "description": "No valid session, or a `current_password` that is wrong.",
+    },
+    status.HTTP_403_FORBIDDEN: {
+        "model": Problem,
+        "description": (
+            "Your account asks for its password before a stored credential changes, and "
+            "the request did not include `current_password`."
+        ),
+    },
+}
+
+_SETTINGS_UNREAD: dict[int | str, dict[str, Any]] = {
+    status.HTTP_503_SERVICE_UNAVAILABLE: {
+        "model": Problem,
+        "description": (
+            "Your settings could not be read, and the change cannot go ahead without them."
+        ),
+    }
+}
+
+ConfirmBody = Annotated[ConfirmPasswordRequest | None, Body()]
+"""An optional body carrying only ``current_password``, for routes that had no body."""
+
+REAUTH_NOTE = (
+    " If your account asks for its password before a stored credential changes, send "
+    "`current_password`; without it the answer is 403."
+)
+"""Appended to every credential-changing route's description, so a model reading the
+tool knows the second password exists before it meets the 403."""
+
+
+def _password(body: ConfirmPasswordRequest | None) -> str | None:
+    """The re-entered password from an optional body, if one was sent."""
+    return body.current_password if body is not None else None
 
 
 def render(profile: Profile) -> ProfileResponse:
@@ -160,19 +208,21 @@ async def get_profile(
         "Removes the profile and every stored credential it holds. Irreversible: the "
         "credentials are deleted from the vault, not merely unlinked, so each service "
         "must be authorised again afterwards. Third-party grants are not revoked at the "
-        "provider -- do that at the provider if you want them gone there too."
+        "provider -- do that at the provider if you want them gone there too." + REAUTH_NOTE
     ),
     status_code=status.HTTP_204_NO_CONTENT,
-    responses={status.HTTP_401_UNAUTHORIZED: _PROBLEM, **_NOT_FOUND},
+    responses={**_REAUTH, **_SETTINGS_UNREAD, **_NOT_FOUND},
 )
 async def delete_profile(
-    name: str, container: ContainerDep, account: CurrentAccountDep
+    name: str, container: ContainerDep, account: CurrentAccountDep, body: ConfirmBody = None
 ) -> Response:
     """Delete a profile and its credentials."""
-    # get_profile first, so a name that does not exist is a 404 rather than a silent
-    # 204 that leaves the caller believing something was deleted.
-    await container.credential_service.get_profile(account.account_id, name)
-    await container.credential_service.delete_profile(account.account_id, name)
+    # A name that does not exist is a 404 rather than a silent 204 that leaves the caller
+    # believing something was deleted.
+    if not await container.credential_changes.remove_profile(
+        account.account_id, name, requester=Requester.person(_password(body))
+    ):
+        raise ProfileNotFoundError(NO_SUCH_PROFILE)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -184,11 +234,11 @@ async def delete_profile(
         "Writes the key straight into the encrypted vault. It does not appear in this "
         "response, in any later read, or in the logs, and there is no endpoint that "
         "returns it -- it leaves only as a header attached by a service that asked for "
-        "it. Replaces any key already stored for that service."
+        "it. Replaces any key already stored for that service." + REAUTH_NOTE
     ),
     response_model=ConnectionResponse,
     responses={
-        status.HTTP_401_UNAUTHORIZED: _PROBLEM,
+        **_REAUTH,
         status.HTTP_422_UNPROCESSABLE_CONTENT: _PROBLEM,
         status.HTTP_429_TOO_MANY_REQUESTS: _PROBLEM,
         **_SEALED,
@@ -203,7 +253,7 @@ async def put_api_key(
     account: CurrentAccountDep,
 ) -> ConnectionResponse:
     """Store an API key."""
-    connection = await container.credential_service.put_direct_credential(
+    connection = await container.credential_changes.store_direct(
         account.account_id,
         name,
         service,
@@ -215,6 +265,7 @@ async def put_api_key(
             "in_query": body.in_query,
             "query_name": body.query_name,
         },
+        requester=Requester.person(body.current_password),
     )
     return render_connection(connection)
 
@@ -228,11 +279,11 @@ async def put_api_key(
         "an OAuth grant is scoped and you can revoke it at the provider, whereas a "
         "stored password can only be revoked by changing it at the site. Sending a "
         "`totp_seed` puts your second factor in the same place as your first, and the "
-        "connection is flagged as such so it is visible afterwards."
+        "connection is flagged as such so it is visible afterwards." + REAUTH_NOTE
     ),
     response_model=ConnectionResponse,
     responses={
-        status.HTTP_401_UNAUTHORIZED: _PROBLEM,
+        **_REAUTH,
         status.HTTP_422_UNPROCESSABLE_CONTENT: _PROBLEM,
         status.HTTP_429_TOO_MANY_REQUESTS: _PROBLEM,
         **_SEALED,
@@ -251,7 +302,7 @@ async def put_password(
     if body.totp_seed:
         secret["totp_seed"] = body.totp_seed
 
-    connection = await container.credential_service.put_direct_credential(
+    connection = await container.credential_changes.store_direct(
         account.account_id,
         name,
         service,
@@ -260,6 +311,7 @@ async def put_password(
         # Flagged from the caller's explicit act of sending a seed, and reported back so
         # the consequence is visible rather than buried.
         stores_totp_seed=bool(body.totp_seed),
+        requester=Requester.person(body.current_password),
     )
     return render_connection(connection)
 
@@ -272,25 +324,30 @@ async def put_password(
         "Returns a provider URL to open in a browser. You consent at the provider, and "
         "the token arrives here server-to-server -- no credential ever passes through "
         "this API. The link is single-use and short-lived; if it expires, ask for "
-        "another. Responds 503 if no OAuth provider is configured for that service."
+        "another. Responds 503 if no OAuth provider is configured for that service." + REAUTH_NOTE
     ),
     response_model=AuthorizationResponse,
     responses={
-        status.HTTP_401_UNAUTHORIZED: _PROBLEM,
+        **_REAUTH,
         status.HTTP_429_TOO_MANY_REQUESTS: _PROBLEM,
         **_SEALED,
         **_NOT_FOUND,
     },
 )
 async def authorize_connection(
-    name: str, service: str, container: ContainerDep, account: CurrentAccountDep
+    name: str,
+    service: str,
+    container: ContainerDep,
+    account: CurrentAccountDep,
+    body: ConfirmBody = None,
 ) -> AuthorizationResponse:
     """Start an OAuth flow."""
-    authorization = await container.credential_service.begin_authorization(
+    authorization = await container.credential_changes.begin_authorization(
         account.account_id,
         name,
         service,
         redirect_uri=container.settings.oauth_redirect_uri,
+        requester=Requester.person(_password(body)),
     )
     return AuthorizationResponse(
         authorization_url=authorization.authorization_url,
@@ -305,16 +362,22 @@ async def authorize_connection(
     description=(
         "Deletes the stored credential for one service and removes the connection. The "
         "grant is not revoked at the provider -- do that at the provider as well if you "
-        "want it gone there too."
+        "want it gone there too." + REAUTH_NOTE
     ),
     status_code=status.HTTP_204_NO_CONTENT,
-    responses={status.HTTP_401_UNAUTHORIZED: _PROBLEM, **_NOT_FOUND},
+    responses={**_REAUTH, **_SETTINGS_UNREAD, **_NOT_FOUND},
 )
 async def delete_connection(
-    name: str, service: str, container: ContainerDep, account: CurrentAccountDep
+    name: str,
+    service: str,
+    container: ContainerDep,
+    account: CurrentAccountDep,
+    body: ConfirmBody = None,
 ) -> Response:
     """Remove a connection."""
-    if not await container.credential_service.revoke_connection(account.account_id, name, service):
+    if not await container.credential_changes.remove_connection(
+        account.account_id, name, service, requester=Requester.person(_password(body))
+    ):
         raise ConnectionNotFoundError(NO_SUCH_CONNECTION)
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -6,9 +6,20 @@ family member and a phishing mail that looks exactly like them.
 
 from __future__ import annotations
 
-from keyring_api.notifications.templates import invite_message, reset_message
+import pytest
+
+from keyring_api.domain.changes import ChangeOrigin, CredentialChange
+from keyring_api.notifications.templates import (
+    CREDENTIAL_CHANGE_SUBJECT,
+    credential_change_message,
+    invite_message,
+    new_session_message,
+    reset_message,
+)
+from tests.fakes.clock import EPOCH
 
 TOKEN = "the-live-token"
+AT = EPOCH
 
 
 class TestReset:
@@ -135,3 +146,86 @@ class TestInvite:
         ):
             assert "<html" not in message.body.lower()
             assert "<a " not in message.body.lower()
+
+
+class TestNewSession:
+    def test_it_says_when_and_to_whom(self) -> None:
+        message = new_session_message(to_address="person@example.com", at=AT)
+
+        assert message.to_address == "person@example.com"
+        assert "2026-01-01 12:00 UTC" in message.body
+        assert "signed in" in message.body
+
+    def test_it_says_what_to_do_if_it_was_not_them(self) -> None:
+        """The bug, named: a warning with no remedy, which only alarms.
+
+        The remedy that actually removes an intruder is a password change, because that is
+        what ends every other session.
+        """
+        message = new_session_message(to_address="person@example.com", at=AT)
+
+        assert "Change your keyring password" in message.body
+        assert "signs out every other session" in message.body
+
+    def test_it_carries_nothing_to_click_and_nothing_secret(self) -> None:
+        """The bug, named: a security notice with a link in it is the shape of phishing.
+
+        And a session id or token in a mailbox is a session somebody else can use.
+        """
+        message = new_session_message(to_address="person@example.com", at=AT)
+
+        assert "http" not in message.body
+        assert "sess_" not in message.body
+        assert "acct_" not in message.body
+        assert "token" not in message.body.lower()
+
+
+class TestCredentialChange:
+    @pytest.mark.parametrize("change", list(CredentialChange))
+    @pytest.mark.parametrize("origin", list(ChangeOrigin))
+    def test_every_change_and_origin_has_words(
+        self, change: CredentialChange, origin: ChangeOrigin
+    ) -> None:
+        message = credential_change_message(
+            to_address="person@example.com", change=change, origin=origin, at=AT
+        )
+
+        assert message.subject == CREDENTIAL_CHANGE_SUBJECT
+        assert "2026-01-01 12:00 UTC" in message.body
+        assert "<" not in message.body
+
+    def test_removal_and_storage_read_differently(self) -> None:
+        stored = credential_change_message(
+            to_address="p@example.com",
+            change=CredentialChange.STORED,
+            origin=ChangeOrigin.PERSON,
+            at=AT,
+        )
+        removed = credential_change_message(
+            to_address="p@example.com",
+            change=CredentialChange.REMOVED,
+            origin=ChangeOrigin.SERVICE,
+            at=AT,
+        )
+
+        assert "added or replaced" in stored.body
+        assert "signed-in session" in stored.body
+        assert "removed" in removed.body
+        assert "a service acting for you" in removed.body
+
+    def test_it_never_says_which_credential(self) -> None:
+        """The bug, named: a notice that tells a mailbox what the account holds.
+
+        Whoever reads the mailbox may not be the account's owner. The message takes no
+        service, profile or value at all, so none can leak into it.
+        """
+        message = credential_change_message(
+            to_address="p@example.com",
+            change=CredentialChange.STORED,
+            origin=ChangeOrigin.PROVIDER,
+            at=AT,
+        )
+
+        assert "does not say which one" in message.body
+        assert "http" not in message.body
+        assert "profile" not in message.body.lower()

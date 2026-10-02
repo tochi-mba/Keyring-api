@@ -47,7 +47,11 @@ from keyring_api.domain.errors import (
 from keyring_api.domain.grants import Grant, GrantPurpose, new_grant_id
 from keyring_api.domain.rbac import DEFAULT_ROLE, OWNER
 from keyring_api.domain.sessions import Session, new_session_id
-from keyring_api.notifications.templates import invite_message, reset_message
+from keyring_api.notifications.templates import (
+    invite_message,
+    new_session_message,
+    reset_message,
+)
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -343,6 +347,12 @@ class AccountService:
         # is memory an authenticated caller allocates for free, one login at a time.
         await self._sessions.add_within_cap(session, cap=prefs.max_sessions)
 
+        if prefs.announces_new_sessions:
+            # Queued, like every message here, so a slow mail provider never slows a login.
+            # Only after the password succeeded, so a stranger cannot use login to mail
+            # somebody: the notice costs knowing the password it warns about.
+            self._outbox.enqueue(new_session_message(to_address=account.email, at=now))
+
         logger.info("login_succeeded", subject_id=account.account_id, session_id=session.session_id)
         return LoginResult(
             session_id=session.session_id,
@@ -425,6 +435,44 @@ class AccountService:
             raise AuthenticationError(BAD_CREDENTIALS)
 
         await self._set_password(account, new_password, keep_session_id=keep_session_id)
+
+    async def confirm_password(self, account_id: str, password: str) -> None:
+        """Prove, inside a live session, that the person still knows the password.
+
+        What a credential change asks for when the account wants re-authentication. It is
+        guarded the way a login is, because it is the same guess: a stolen session token
+        must not become an unlimited password oracle. A wrong password counts toward the
+        lockout, a locked or disabled account is refused whatever is sent, and every path
+        hashes so the answer's timing says nothing either.
+
+        Raises:
+            AuthenticationError: wrong password, a locked or disabled account, or an
+                account that is gone -- undifferentiated, as at login.
+        """
+        account = await self._accounts.get(account_id)
+        if account is None:
+            self._hasher.verify_dummy(password)
+            raise AuthenticationError(BAD_CREDENTIALS)
+
+        now = self._clock.now()
+        if account.is_locked(now=now) or account.status is not AccountStatus.ACTIVE:
+            self._hasher.verify(account.password_hash, password)
+            logger.info("reauthentication_failed", reason="not_authenticable")
+            raise AuthenticationError(BAD_CREDENTIALS)
+
+        if not self._hasher.verify(account.password_hash, password):
+            await self._accounts.save(
+                account.with_failure(
+                    now=now,
+                    lockout_threshold=self._settings.lockout_threshold,
+                    lockout_seconds=self._settings.lockout_seconds,
+                )
+            )
+            logger.info("reauthentication_failed", reason="bad_password")
+            raise AuthenticationError(BAD_CREDENTIALS)
+
+        if account.failed_attempts:
+            await self._accounts.save(account.with_success())
 
     async def request_password_reset(self, *, email: str, caller: str) -> IssuedGrant | None:
         """Mint a reset token, if that address has an account.

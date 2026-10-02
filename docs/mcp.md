@@ -25,6 +25,12 @@ reason".
 | Everything under `/v1/internal` | Service-to-service. Each route needs a service's own token, which a model must never hold, and `exchange_user_token` mints new authority. |
 | `create_offline_grant`, `create_delegated_grant` | Consent for a service to act while the person is away is theirs to give, not a model's. A service records it only after its own approval step has asked the person. |
 
+`current_password` — the re-entered account password a credential change needs when the
+person has `keyring.require_reauth_for_credential_changes` on — must never become a tool
+parameter, on any route. A model that could pass it would be exactly the thing that setting
+exists to stop; the 403 a tool meets instead is the correct outcome, and the answer is to
+send the person to do it themselves.
+
 The general shape: **a model may ask what identities exist; the service acting for it uses
 them.** That split is the whole reason `/v1/internal` requires both a service token and the
 end user's token — the model never holds either.

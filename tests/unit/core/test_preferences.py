@@ -6,6 +6,7 @@ off, because the outage is the case most services forget and the one their users
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -14,10 +15,14 @@ from structlog.testing import capture_logs
 from keyring_api.core.config import LogFormat, Settings
 from keyring_api.core.logging import configure_logging
 from keyring_api.core.preferences import (
+    EMAIL_NOTIFICATIONS,
     MAX_SESSIONS_MAX,
     NAMESPACE,
     NOT_GUESSED,
+    NOTIFY_ON_CREDENTIAL_CHANGE,
+    NOTIFY_ON_NEW_SESSION,
     REFUSED,
+    REQUIRE_REAUTH,
     SECONDS_PER_DAY,
     SESSION_ABSOLUTE_TTL_DAYS_MAX,
     SESSION_TTL_DAYS_MAX,
@@ -225,6 +230,12 @@ class TestAPersonsChoices:
 
 class TestWhenSettingsApiCannotBeReached:
     async def test_never_having_answered_leaves_the_configuration(self) -> None:
+        """Everything but re-authentication, which is unknown rather than off.
+
+        The bug, named: the whole configuration standing in during an outage would read
+        re-authentication as off -- the permissive answer its catalogue entry refuses to
+        fall back to -- for a person who may have turned it on.
+        """
         client = FakeSettingsClient()
         client.unavailable = True
         settings = settings_with()
@@ -233,7 +244,9 @@ class TestWhenSettingsApiCannotBeReached:
             client=client, settings=settings, issuer=RecordingIssuer()
         ).for_account(ACCOUNT_ID)
 
-        assert preferences == deployment_preferences(settings)
+        assert preferences == replace(
+            deployment_preferences(settings), require_reauth_for_credential_changes=None
+        )
 
     async def test_a_person_who_chose_one_day_gets_fourteen_during_an_outage(self) -> None:
         client = FakeSettingsClient()
@@ -362,6 +375,127 @@ class TestValuesThatCannotBeUsed:
         assert any(entry.get("key") == "session_ttl_days" for entry in logs)
         assert all("a-value-nobody-should-read" not in str(entry) for entry in logs)
         assert all(MINTED_TOKEN not in str(entry) for entry in logs)
+
+
+class TestNoticesAndReauthentication:
+    async def test_nobody_who_chose_nothing_is_mailed_or_asked_twice(self) -> None:
+        """The bug, named: wiring these up must not change anything for somebody who chose nothing.
+
+        keyring announced nothing and asked for no second password before it read these.
+        A settings-api with no stored choice -- or no such entries at all -- must leave it so.
+        """
+        client = FakeSettingsClient()
+        client.seed(NAMESPACE, {})
+
+        preferences = await reading(client).for_account(ACCOUNT_ID)
+
+        assert preferences.email_notifications is True
+        assert preferences.notify_on_new_session is False
+        assert preferences.notify_on_credential_change is False
+        assert preferences.require_reauth_for_credential_changes is False
+        assert not preferences.announces_new_sessions
+        assert not preferences.announces_credential_changes
+
+    async def test_each_choice_is_the_persons_own(self) -> None:
+        client = FakeSettingsClient()
+        client.seed(
+            NAMESPACE,
+            {
+                EMAIL_NOTIFICATIONS: True,
+                NOTIFY_ON_NEW_SESSION: True,
+                NOTIFY_ON_CREDENTIAL_CHANGE: True,
+                REQUIRE_REAUTH: True,
+            },
+        )
+
+        preferences = await reading(client).for_account(ACCOUNT_ID)
+
+        assert preferences.announces_new_sessions
+        assert preferences.announces_credential_changes
+        assert preferences.require_reauth_for_credential_changes is True
+
+    async def test_the_master_switch_silences_both_notices(self) -> None:
+        """The bug, named: a subordinate notice still sent with email turned off entirely."""
+        client = FakeSettingsClient()
+        client.seed(
+            NAMESPACE,
+            {
+                EMAIL_NOTIFICATIONS: False,
+                NOTIFY_ON_NEW_SESSION: True,
+                NOTIFY_ON_CREDENTIAL_CHANGE: True,
+            },
+        )
+
+        preferences = await reading(client).for_account(ACCOUNT_ID)
+
+        assert not preferences.announces_new_sessions
+        assert not preferences.announces_credential_changes
+
+    @pytest.mark.parametrize("key", [EMAIL_NOTIFICATIONS, NOTIFY_ON_NEW_SESSION])
+    @pytest.mark.parametrize("value", [1, "yes", [], 0])
+    async def test_a_switch_that_is_not_a_boolean_is_the_deployments(
+        self, key: str, value: Any
+    ) -> None:
+        client = FakeSettingsClient()
+        client.seed(NAMESPACE, {key: value})
+
+        with capture_logs() as logs:
+            preferences = await reading(client).for_account(ACCOUNT_ID)
+
+        assert preferences.email_notifications is True
+        assert preferences.notify_on_new_session is False
+        assert any(entry.get("key") == key for entry in logs)
+
+    async def test_an_outage_lands_the_switches_on_their_declared_fallbacks(self) -> None:
+        fallbacks = {
+            **FALLBACKS,
+            NOTIFY_ON_NEW_SESSION: Fallback(default=True, on_unavailable=OnUnavailable.USE_DEFAULT),
+        }
+        client = FakeSettingsClient(fallbacks={NAMESPACE: fallbacks})
+        client.unavailable = True
+
+        preferences = await reading(client).for_account(ACCOUNT_ID)
+
+        assert preferences.notify_on_new_session is True
+
+    async def test_re_authentication_that_refuses_is_unknown_and_never_off(self) -> None:
+        """The bug, named: a refused entry read as the configuration's answer, which is off.
+
+        A person who turned re-authentication on would have it silently disarmed by an
+        outage. It must come back as unknown -- and must not fail the read, because a login
+        never needs it and an outage must not fail a login.
+        """
+        refusing = {
+            **FALLBACKS,
+            REQUIRE_REAUTH: Fallback(default=False, on_unavailable=OnUnavailable.REFUSE),
+        }
+        client = FakeSettingsClient(fallbacks={NAMESPACE: refusing})
+        client.unavailable = True
+
+        with capture_logs() as logs:
+            preferences = await reading(client).for_account(ACCOUNT_ID)
+
+        assert preferences.require_reauth_for_credential_changes is None
+        assert preferences.session_ttl_seconds == settings_with().session_ttl_seconds
+        assert any(entry.get("key") == REQUIRE_REAUTH for entry in logs)
+
+    @pytest.mark.parametrize("value", [None, "true", 1, 0])
+    async def test_an_unusable_re_authentication_value_is_unknown(self, value: Any) -> None:
+        """The bug, named: a malformed value falling back to off, the one answer never guessed."""
+        client = FakeSettingsClient()
+        client.seed(NAMESPACE, {REQUIRE_REAUTH: value})
+
+        preferences = await reading(client).for_account(ACCOUNT_ID)
+
+        assert preferences.require_reauth_for_credential_changes is None
+
+    async def test_a_settings_api_without_the_entry_never_held_a_choice(self) -> None:
+        client = FakeSettingsClient()
+        client.seed(NAMESPACE, {"session_ttl_days": 3})
+
+        preferences = await reading(client).for_account(ACCOUNT_ID)
+
+        assert preferences.require_reauth_for_credential_changes is False
 
 
 class TestSecretsStayOutOfRepr:

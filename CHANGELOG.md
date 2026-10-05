@@ -104,6 +104,9 @@ All notable changes to keyring-api are recorded here. The format follows
 
 ### Fixed
 
+- **settings-client 0.4.2.** A 2xx answer the client cannot use -- a proxy's page, an empty
+  body, a document from a newer settings-api -- is treated as an outage and degrades as one,
+  instead of reaching this service as a 500.
 - `.env.example` no longer sets `KEYRING_SECRET_DIR`, which stopped existing when the
   vault moved to SQLite (ADR-0012). Copying the file to `.env` was a startup error.
 - The owner-only file checks on the key material and the OAuth providers file are POSIX

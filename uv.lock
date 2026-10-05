@@ -750,7 +750,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.5" },
     { name = "pyjwt", specifier = ">=2.9" },
-    { name = "settings-client", git = "https://github.com/tochi-mba/Settings-api?subdirectory=clients%2Fpython&tag=settings-client-v0.4.1" },
+    { name = "settings-client", git = "https://github.com/tochi-mba/Settings-api?subdirectory=clients%2Fpython&tag=settings-client-v0.4.2" },
     { name = "structlog", specifier = ">=24.4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
@@ -1268,8 +1268,8 @@ wheels = [
 
 [[package]]
 name = "settings-client"
-version = "0.4.1"
-source = { git = "https://github.com/tochi-mba/Settings-api?subdirectory=clients%2Fpython&tag=settings-client-v0.4.1#4234c872e989c52a8fb2ad037be98c21218c17bb" }
+version = "0.4.2"
+source = { git = "https://github.com/tochi-mba/Settings-api?subdirectory=clients%2Fpython&tag=settings-client-v0.4.2#a985d92347148f3612cca7e7215b558353a2ffc2" }
 dependencies = [
     { name = "httpx" },
 ]

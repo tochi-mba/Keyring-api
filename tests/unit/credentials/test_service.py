@@ -7,6 +7,7 @@ it has to be established here rather than in production.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
@@ -644,6 +645,57 @@ class TestRefresh:
         await again.headers()
 
         assert len(endpoint.refreshes) == 1
+
+    async def test_two_callers_renewing_one_grant_at_once_refresh_it_once(
+        self, service: CredentialService, endpoint: FakeTokenEndpoint, clock: FakeClock
+    ) -> None:
+        # Two commands started together in one sandbox both ask for the same expiring
+        # grant. Both used to refresh it, with the same refresh token: a provider that
+        # rotates refresh tokens refuses the second, and RFC 9700 tells it to treat the
+        # reuse as replay and revoke the chain. The second caller waits, and takes the
+        # token the first one stored.
+        await service.create_profile(ACCOUNT, "personal")
+        await connect_oauth(service)
+        endpoint.access_token = "access-2"
+        endpoint.during_call = lambda: asyncio.sleep(0)
+        clock.advance(timedelta(seconds=3600 - 60))
+
+        first = await service.resolve_http_auth(ACCOUNT, "personal", "spotify")
+        second = await service.resolve_http_auth(ACCOUNT, "personal", "spotify")
+        headers = await asyncio.gather(first.headers(), second.headers())
+
+        assert endpoint.refreshes == ["refresh-1"]
+        assert list(headers) == [{"Authorization": "Bearer access-2"}] * 2
+
+    async def test_renewals_of_different_grants_do_not_wait_for_each_other(
+        self, service: CredentialService, endpoint: FakeTokenEndpoint, clock: FakeClock
+    ) -> None:
+        await service.create_profile(ACCOUNT, "personal")
+        await service.create_profile(ACCOUNT, "work")
+        await connect_oauth(service)
+        await connect_oauth(service, profile="work")
+        gate = asyncio.Event()
+        both_in = asyncio.Event()
+        entered: list[str] = []
+
+        async def held() -> None:
+            # Each renewal waits here until the other has reached the provider too, which
+            # it never would if one grant's renewal waited behind the other's.
+            entered.append("call")
+            if len(entered) == 2:
+                both_in.set()
+            await gate.wait()
+
+        endpoint.during_call = held
+        clock.advance(timedelta(seconds=3600 - 60))
+
+        personal = await service.resolve_http_auth(ACCOUNT, "personal", "spotify")
+        work = await service.resolve_http_auth(ACCOUNT, "work", "spotify")
+        both = asyncio.gather(personal.headers(), work.headers())
+        await asyncio.wait_for(both_in.wait(), timeout=5)
+        gate.set()
+        await both
+        assert len(endpoint.refreshes) == 2
 
     async def test_a_refresh_that_returns_no_new_refresh_token_keeps_the_old_one(
         self, service: CredentialService, endpoint: FakeTokenEndpoint, clock: FakeClock

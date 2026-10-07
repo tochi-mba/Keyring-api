@@ -19,6 +19,7 @@ must not destroy a refresh token that will work again afterwards.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -97,6 +98,9 @@ class CredentialService:
         self._providers = providers
         self._clock = clock
         self._settings = settings
+        # One renewal at a time per grant. Whoever waited re-reads the vault and takes
+        # what the renewal before it stored; see `_refresh`.
+        self._renewing: dict[tuple[str, str, str], asyncio.Lock] = {}
 
     # -- Profiles ----------------------------------------------------------------------
 
@@ -413,6 +417,23 @@ class CredentialService:
         return profile, connection, secret
 
     async def _refresh(self, profile: Profile, connection: Connection, secret: Secret) -> Secret:
+        """Renew an access token and write it back, once per grant however many ask.
+
+        Two callers can hold the same expiring credential at once: two commands started
+        together in one sandbox each resolve it before either renews it. Both used to
+        refresh with the same refresh token, and a provider that rotates refresh tokens
+        refuses the second -- RFC 9700 tells it to treat the reuse as replay and revoke
+        the whole chain. So renewals of one grant take turns, and a caller that waited
+        finds the token the one before it stored and uses that instead of renewing again.
+        """
+        key = (profile.account_id, profile.name, connection.service)
+        async with self._renewing.setdefault(key, asyncio.Lock()):
+            stored = await self._secrets.get(profile.account_id, profile.name, connection.service)
+            if stored is not None and stored.get("access_token") != secret.get("access_token"):
+                return stored
+            return await self._renew(profile, connection, secret)
+
+    async def _renew(self, profile: Profile, connection: Connection, secret: Secret) -> Secret:
         """Renew an access token and write it back.
 
         Written back in the same call, so the next request does not repeat the work; a

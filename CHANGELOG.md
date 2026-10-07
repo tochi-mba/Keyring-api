@@ -104,6 +104,12 @@ All notable changes to keyring-api are recorded here. The format follows
 
 ### Fixed
 
+- **One renewal per grant, however many callers ask at once.** Two requests that resolved
+  the same expiring OAuth credential before either renewed it both refreshed it, with the
+  same refresh token -- two commands started together in one sandbox are enough. A
+  provider that rotates refresh tokens refuses the second, and RFC 9700 tells it to treat
+  the reuse as replay and revoke the chain. Renewals of one grant now take turns, and a
+  caller that waited uses the token the renewal before it stored instead of renewing again.
 - **settings-client 0.4.2.** A 2xx answer the client cannot use -- a proxy's page, an empty
   body, a document from a newer settings-api -- is treated as an outage and degrades as one,
   instead of reaching this service as a 500.
